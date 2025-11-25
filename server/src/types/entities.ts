@@ -180,3 +180,56 @@ export interface TripAssignment {
   created_at: string;
   updated_at: string;
 }
+
+export interface PackingArea {
+  id: number;
+  user_id: number;
+  name: string;
+  location_description: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PackingBox {
+  id: number;
+  area_id: number;
+  label: string;
+  box_type: string | null;
+  weight_kg: number | null;
+  status: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PackingItem {
+  id: number;
+  box_id: number;
+  name: string;
+  quantity: number;
+  fragile: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CommunityPlace {
+  id: number;
+  user_id: number;
+  name: string;
+  address: string | null;
+  category: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CommunityVisit {
+  id: number;
+  place_id: number;
+  visited_at: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}

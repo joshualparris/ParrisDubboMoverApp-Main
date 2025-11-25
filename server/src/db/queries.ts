@@ -85,7 +85,7 @@ export async function updateTripAssignment(id: number, input: Partial<TripAssign
   return db.prepare('SELECT * FROM trip_assignments WHERE id = ?').get(id) ?? null;
 }
 import { getDb } from './index';
-import type { Domain, Task, TaskStatus, Trip, TripAssignment, Provider, Appointment } from '../types/entities';
+import type { Domain, Task, TaskStatus, Trip, TripAssignment, Provider, Appointment, PackingArea, PackingBox, PackingItem, CommunityPlace, CommunityVisit } from '../types/entities';
 
 export interface NewTaskInput {
   user_id: number;
@@ -161,20 +161,6 @@ export async function getTasksByDomain(domainSlugOrId: string | number): Promise
       ORDER BY due_date ASC, priority DESC, created_at ASC
     `).all(domainSlugOrId);
   }
-}
-
-// --- CT9: What Next? (Next Actions)
-export async function listPendingTasks(limit: number = 3): Promise<Array<Task & { domain_slug?: string }>> {
-  const db = getDb();
-  // Select pending tasks and include domain slug for context
-  return db.prepare(`
-    SELECT t.*, d.slug as domain_slug
-    FROM tasks t
-    JOIN domains d ON t.domain_id = d.id
-    WHERE t.status = 'pending'
-    ORDER BY t.priority DESC, (t.due_date IS NULL), t.due_date ASC, t.created_at ASC
-    LIMIT ?
-  `).all(limit) as Array<Task & { domain_slug?: string }>;
 }
 
 export async function updateTaskStatus(id: number, status: TaskStatus): Promise<Task> {
@@ -526,6 +512,167 @@ export async function createTripAssignment(input: NewTripAssignmentInput): Promi
 export async function deleteTripAssignment(id: number): Promise<void> {
   const db = getDb();
   db.prepare('DELETE FROM trip_assignments WHERE id = ?').run(id);
+}
+
+// --- Packing module ---
+export async function listPackingAreas(): Promise<PackingArea[]> {
+  const db = getDb();
+  return db.prepare('SELECT * FROM packing_areas WHERE user_id = ? ORDER BY name ASC').all(1);
+}
+
+export async function getPackingAreaById(id: number): Promise<PackingArea | null> {
+  const db = getDb();
+  return db.prepare('SELECT * FROM packing_areas WHERE id = ?').get(id) ?? null;
+}
+
+export async function createPackingArea(input: Omit<PackingArea, 'id' | 'created_at' | 'updated_at'>): Promise<PackingArea> {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const stmt = db.prepare('INSERT INTO packing_areas (user_id, name, location_description, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
+  const res = stmt.run(input.user_id ?? 1, input.name, input.location_description ?? null, input.notes ?? null, now, now);
+  return (await getPackingAreaById(res.lastInsertRowid as number)) as PackingArea;
+}
+
+export async function updatePackingArea(id: number, input: Partial<PackingArea>): Promise<PackingArea | null> {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const editable = ['name', 'location_description', 'notes'] as const;
+  const updates = editable.filter(f => input[f as keyof typeof input] !== undefined);
+  if (updates.length === 0) return getPackingAreaById(id);
+  const setClause = updates.map(f => `${f} = ?`).join(', ') + ', updated_at = ?';
+  const values = updates.map(f => input[f as keyof typeof input]);
+  values.push(now);
+  db.prepare(`UPDATE packing_areas SET ${setClause} WHERE id = ?`).run(...values, id);
+  return getPackingAreaById(id);
+}
+
+export async function deletePackingArea(id: number): Promise<void> {
+  const db = getDb();
+  db.prepare('DELETE FROM packing_areas WHERE id = ?').run(id);
+}
+
+// Boxes
+export async function listPackingBoxesByArea(areaId: number): Promise<PackingBox[]> {
+  const db = getDb();
+  return db.prepare('SELECT * FROM packing_boxes WHERE area_id = ? ORDER BY id ASC').all(areaId);
+}
+
+export async function getPackingBoxById(id: number): Promise<PackingBox | null> {
+  const db = getDb();
+  return db.prepare('SELECT * FROM packing_boxes WHERE id = ?').get(id) ?? null;
+}
+
+export async function createPackingBox(input: Omit<PackingBox, 'id' | 'created_at' | 'updated_at'>): Promise<PackingBox> {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const stmt = db.prepare('INSERT INTO packing_boxes (area_id, label, box_type, weight_kg, status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+  const res = stmt.run(input.area_id, input.label, input.box_type ?? null, input.weight_kg ?? null, input.status ?? null, input.notes ?? null, now, now);
+  return (await getPackingBoxById(res.lastInsertRowid as number)) as PackingBox;
+}
+
+export async function updatePackingBox(id: number, input: Partial<PackingBox>): Promise<PackingBox | null> {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const editable = ['label', 'box_type', 'weight_kg', 'status', 'notes'] as const;
+  const updates = editable.filter(f => input[f as keyof typeof input] !== undefined);
+  if (updates.length === 0) return getPackingBoxById(id);
+  const setClause = updates.map(f => `${f} = ?`).join(', ') + ', updated_at = ?';
+  const values = updates.map(f => input[f as keyof typeof input]);
+  values.push(now);
+  db.prepare(`UPDATE packing_boxes SET ${setClause} WHERE id = ?`).run(...values, id);
+  return getPackingBoxById(id);
+}
+
+export async function deletePackingBox(id: number): Promise<void> {
+  const db = getDb();
+  db.prepare('DELETE FROM packing_boxes WHERE id = ?').run(id);
+}
+
+// Items
+export async function listPackingItemsByBox(boxId: number): Promise<PackingItem[]> {
+  const db = getDb();
+  return db.prepare('SELECT * FROM packing_items WHERE box_id = ? ORDER BY id ASC').all(boxId);
+}
+
+export async function createPackingItem(input: Omit<PackingItem, 'id' | 'created_at' | 'updated_at'>): Promise<PackingItem> {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const stmt = db.prepare('INSERT INTO packing_items (box_id, name, quantity, fragile, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  const res = stmt.run(input.box_id, input.name, input.quantity ?? 1, input.fragile ?? 0, input.notes ?? null, now, now);
+  return db.prepare('SELECT * FROM packing_items WHERE id = ?').get(res.lastInsertRowid) as PackingItem;
+}
+
+export async function updatePackingItem(id: number, input: Partial<PackingItem>): Promise<PackingItem | null> {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const editable = ['name', 'quantity', 'fragile', 'notes'] as const;
+  const updates = editable.filter(f => input[f as keyof typeof input] !== undefined);
+  if (updates.length === 0) return db.prepare('SELECT * FROM packing_items WHERE id = ?').get(id) ?? null;
+  const setClause = updates.map(f => `${f} = ?`).join(', ') + ', updated_at = ?';
+  const values = updates.map(f => input[f as keyof typeof input]);
+  values.push(now);
+  db.prepare(`UPDATE packing_items SET ${setClause} WHERE id = ?`).run(...values, id);
+  return db.prepare('SELECT * FROM packing_items WHERE id = ?').get(id) ?? null;
+}
+
+export async function deletePackingItem(id: number): Promise<void> {
+  const db = getDb();
+  db.prepare('DELETE FROM packing_items WHERE id = ?').run(id);
+}
+
+// --- Community module ---
+export async function listCommunityPlaces(): Promise<CommunityPlace[]> {
+  const db = getDb();
+  return db.prepare('SELECT * FROM community_places WHERE user_id = ? ORDER BY name ASC').all(1);
+}
+
+export async function getCommunityPlaceById(id: number): Promise<CommunityPlace | null> {
+  const db = getDb();
+  return db.prepare('SELECT * FROM community_places WHERE id = ?').get(id) ?? null;
+}
+
+export async function createCommunityPlace(input: Omit<CommunityPlace, 'id' | 'created_at' | 'updated_at'>): Promise<CommunityPlace> {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const stmt = db.prepare('INSERT INTO community_places (user_id, name, address, category, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  const res = stmt.run(input.user_id ?? 1, input.name, input.address ?? null, input.category ?? null, input.notes ?? null, now, now);
+  return (await getCommunityPlaceById(res.lastInsertRowid as number)) as CommunityPlace;
+}
+
+export async function updateCommunityPlace(id: number, input: Partial<CommunityPlace>): Promise<CommunityPlace | null> {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const editable = ['name', 'address', 'category', 'notes'] as const;
+  const updates = editable.filter(f => input[f as keyof typeof input] !== undefined);
+  if (updates.length === 0) return getCommunityPlaceById(id);
+  const setClause = updates.map(f => `${f} = ?`).join(', ') + ', updated_at = ?';
+  const values = updates.map(f => input[f as keyof typeof input]);
+  values.push(now);
+  db.prepare(`UPDATE community_places SET ${setClause} WHERE id = ?`).run(...values, id);
+  return getCommunityPlaceById(id);
+}
+
+export async function deleteCommunityPlace(id: number): Promise<void> {
+  const db = getDb();
+  db.prepare('DELETE FROM community_places WHERE id = ?').run(id);
+}
+
+export async function listCommunityVisitsByPlace(placeId: number): Promise<CommunityVisit[]> {
+  const db = getDb();
+  return db.prepare('SELECT * FROM community_visits WHERE place_id = ? ORDER BY visited_at DESC').all(placeId);
+}
+
+export async function createCommunityVisit(input: { place_id: number; visited_at: string; notes?: string | null }): Promise<CommunityVisit> {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const stmt = db.prepare('INSERT INTO community_visits (place_id, visited_at, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?)');
+  const res = stmt.run(input.place_id, input.visited_at, input.notes ?? null, now, now);
+  return db.prepare('SELECT * FROM community_visits WHERE id = ?').get(res.lastInsertRowid) as CommunityVisit;
+}
+
+export async function deleteCommunityVisit(id: number): Promise<void> {
+  const db = getDb();
+  db.prepare('DELETE FROM community_visits WHERE id = ?').run(id);
 }
 
 // --- CT9: Next Actions / What Next engine ---

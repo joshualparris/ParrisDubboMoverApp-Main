@@ -13,6 +13,7 @@ const router = Router();
 router.post('/upload', upload.single('file'), async (req, res) => {
   try {
     const file = req.file;
+    if (!file) return res.status(400).json({ error: 'No file uploaded' });
     const title = req.body.title || file.originalname;
     const user_id = 1; // For now, always user 1
     const content_text = await extractTextFromFile(file.path, file.mimetype, file.originalname);

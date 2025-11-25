@@ -10,11 +10,11 @@ export async function fetchChildcareOption(id: number): Promise<ChildcareOption>
 }
 
 export async function createChildcareOption(payload: Partial<ChildcareOption>): Promise<ChildcareOption> {
-  return apiRequest('/api/childcare-options', { method: 'POST', body: payload });
+  return apiRequest('/api/childcare-options', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export async function updateChildcareOption(id: number, payload: Partial<ChildcareOption>): Promise<ChildcareOption> {
-  return apiRequest(`/api/childcare-options/${id}`, { method: 'PATCH', body: payload });
+  return apiRequest(`/api/childcare-options/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
 }
 
 export async function deleteChildcareOption(id: number): Promise<void> {

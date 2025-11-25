@@ -16,6 +16,8 @@ import workLinksRouter from './routes/work-links';
 import propertiesRouter from './routes/properties';
 import jobOptionsRouter from './routes/jobOptions';
 import childcareOptionsRouter from './routes/childcareOptions';
+import packingRouter from './routes/packing';
+import communityRouter from './routes/community';
 
 const app = express();
 
@@ -39,6 +41,8 @@ app.use('/api/work-links', workLinksRouter);
 app.use('/api/properties', propertiesRouter);
 app.use('/api/job-options', jobOptionsRouter);
 app.use('/api/childcare-options', childcareOptionsRouter);
+app.use('/api/packing', packingRouter);
+app.use('/api/community', communityRouter);
 
 // Default homepage route
 app.get('/', (req, res) => {

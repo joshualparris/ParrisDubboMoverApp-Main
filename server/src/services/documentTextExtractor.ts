@@ -35,7 +35,8 @@ async function extractPdfText(filePath: string): Promise<string> {
   try {
     const pdfParse = (await import('pdf-parse')).default;
     const data = fs.readFileSync(filePath);
-    const result = await pdfParse(data);
+    const pdfParseFn = pdfParse as any;
+    const result = await pdfParseFn(data);
     return result.text;
   } catch (err) {
     console.error('PDF parse failed:', err);

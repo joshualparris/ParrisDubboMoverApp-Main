@@ -13,6 +13,8 @@ import { CompliancePage } from './pages/CompliancePage';
 import JobOptionsPage from './pages/JobOptionsPage';
 import ChildcareOptionsPage from './pages/ChildcareOptionsPage';
 import PropertiesPage from './pages/PropertiesPage';
+import PackingPage from './pages/PackingPage';
+import CommunityPage from './pages/CommunityPage';
 
 export default function App() {
   return (
@@ -32,6 +34,8 @@ export default function App() {
           <Link to="/move-plan">Move Plan</Link>
           <Link to="/comparison">Comparison Dashboard</Link>
           <Link to="/health-ndis">Health & NDIS</Link>
+          <Link to="/packing">Packing</Link>
+          <Link to="/community">Community</Link>
         </nav>
       </header>
       <main style={{ padding: 16 }}>
@@ -49,6 +53,8 @@ export default function App() {
           <Route path="/move-plan" element={<MovePlanPage />} />
           <Route path="/comparison" element={<ComparisonDashboard />} />
           <Route path="/health-ndis" element={<HealthNdisPage />} />
+          <Route path="/packing" element={<PackingPage />} />
+          <Route path="/community" element={<CommunityPage />} />
         </Routes>
       </main>
     </div>

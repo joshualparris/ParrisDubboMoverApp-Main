@@ -2,9 +2,9 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 
-let db: Database | null = null;
+let db: InstanceType<typeof Database> | null = null;
 
-export function getDb(): Database {
+export function getDb(): InstanceType<typeof Database> {
   if (!db) {
     const dataDir = path.resolve(__dirname, '../../data');
     fs.mkdirSync(dataDir, { recursive: true });
