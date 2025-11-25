@@ -1,5 +1,5 @@
 import type { Document } from '../types/entities';
-import { getDb } from './index';
+import { execAll, execGet, insertAndReturn } from './index';
 
 export interface NewDocumentInput {
   user_id: number;
@@ -12,33 +12,22 @@ export interface NewDocumentInput {
 }
 
 export async function createDocument(input: NewDocumentInput): Promise<Document> {
-  const db = getDb();
-  const stmt = db.prepare(`
+  const sql = `
     INSERT INTO documents (user_id, title, original_filename, source_path, content_text, uploaded_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  const result = stmt.run(
-    input.user_id,
-    input.title,
-    input.original_filename,
-    input.source_path,
-    input.content_text,
-    input.uploaded_at,
-    input.updated_at
-  );
-  return db.prepare('SELECT * FROM documents WHERE id = ?').get(result.lastInsertRowid);
+  `;
+  const params = [input.user_id, input.title, input.original_filename, input.source_path, input.content_text, input.uploaded_at, input.updated_at];
+  return insertAndReturn('documents', sql, params);
 }
 
 export async function getDocumentById(id: number): Promise<Document | null> {
-  const db = getDb();
-  return db.prepare('SELECT * FROM documents WHERE id = ?').get(id) ?? null;
+  return execGet<Document>('SELECT * FROM documents WHERE id = ?', [id]);
 }
 
 export async function listDocuments(params: { search?: string } = {}): Promise<Document[]> {
-  const db = getDb();
   if (params.search) {
-    return db.prepare(`SELECT * FROM documents WHERE title LIKE ? OR content_text LIKE ? ORDER BY uploaded_at DESC`)
-      .all(`%${params.search}%`, `%${params.search}%`);
+    const q = `SELECT * FROM documents WHERE title LIKE ? OR content_text LIKE ? ORDER BY uploaded_at DESC`;
+    return execAll<Document>(q, [`%${params.search}%`, `%${params.search}%`]);
   }
-  return db.prepare('SELECT * FROM documents ORDER BY uploaded_at DESC').all();
+  return execAll<Document>('SELECT * FROM documents ORDER BY uploaded_at DESC');
 }

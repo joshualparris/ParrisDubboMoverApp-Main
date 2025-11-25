@@ -31,7 +31,10 @@ export default function PackingPage() {
 
   return (
     <div>
-      <h2>Packing</h2>
+      <div className="page-header">
+        <div className="breadcrumb">Logistics / Packing</div>
+        <h2>Packing</h2>
+      </div>
       <div style={{ display: 'flex', gap: 24 }}>
         <div style={{ minWidth: 240 }}>
           <h3>Areas</h3>

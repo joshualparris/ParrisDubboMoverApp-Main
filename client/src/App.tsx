@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Routes, Route, Link } from 'react-router-dom';
+import { Routes, Route } from 'react-router-dom';
 import Home from './pages/Home';
 import MovePlanPage from './pages/MovePlanPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -15,48 +15,46 @@ import ChildcareOptionsPage from './pages/ChildcareOptionsPage';
 import PropertiesPage from './pages/PropertiesPage';
 import PackingPage from './pages/PackingPage';
 import CommunityPage from './pages/CommunityPage';
+import Sidebar from './components/Sidebar';
 
 export default function App() {
+  const [collapsed, setCollapsed] = React.useState(false);
+
   return (
-    <div>
-      <header style={{ padding: 16, borderBottom: '1px solid #eee' }}>
-        <h1>ParrisDubboMover App</h1>
-        <nav style={{ display: 'flex', gap: 16 }}>
-          <Link to="/">Home</Link>
-          <Link to="/dashboard">Dashboard</Link>
-          <Link to="/next-actions">What Next?</Link>
-          <Link to="/properties">Properties</Link>
-          <Link to="/job-options">Job Options</Link>
-          <Link to="/childcare-options">Childcare</Link>
-          <Link to="/dcs">DCS Work Hub</Link>
-          <Link to="/tasks">Tasks</Link>
-          <Link to="/documents">Documents</Link>
-          <Link to="/move-plan">Move Plan</Link>
-          <Link to="/comparison">Comparison Dashboard</Link>
-          <Link to="/health-ndis">Health & NDIS</Link>
-          <Link to="/packing">Packing</Link>
-          <Link to="/community">Community</Link>
-        </nav>
+    <div className="app-shell">
+      <header className="app-header">
+        <div className="header-inner">
+          <button className="sidebar-toggle" onClick={() => setCollapsed(s => !s)} aria-label="Toggle navigation">
+            ☰
+          </button>
+          <h1 className="app-title">ParrisDubboMover</h1>
+        </div>
       </header>
-      <main style={{ padding: 16 }}>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/next-actions" element={<NextActionsPage />} />
-          <Route path="/job-options" element={<JobOptionsPage />} />
-          <Route path="/childcare-options" element={<ChildcareOptionsPage />} />
-          <Route path="/dcs" element={<DcsWorkPage />} />
-          <Route path="/properties" element={<PropertiesPage />} />
-          <Route path="/compliance" element={<CompliancePage />} />
-          <Route path="/tasks" element={<TasksPage />} />
-          <Route path="/documents" element={<DocumentsPage />} />
-          <Route path="/move-plan" element={<MovePlanPage />} />
-          <Route path="/comparison" element={<ComparisonDashboard />} />
-          <Route path="/health-ndis" element={<HealthNdisPage />} />
-          <Route path="/packing" element={<PackingPage />} />
-          <Route path="/community" element={<CommunityPage />} />
-        </Routes>
-      </main>
+
+      <div className="app-body">
+        <Sidebar collapsed={collapsed} />
+        <main className="app-main">
+          <div className="app-main-inner">
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/next-actions" element={<NextActionsPage />} />
+              <Route path="/job-options" element={<JobOptionsPage />} />
+              <Route path="/childcare-options" element={<ChildcareOptionsPage />} />
+              <Route path="/dcs" element={<DcsWorkPage />} />
+              <Route path="/properties" element={<PropertiesPage />} />
+              <Route path="/compliance" element={<CompliancePage />} />
+              <Route path="/tasks" element={<TasksPage />} />
+              <Route path="/documents" element={<DocumentsPage />} />
+              <Route path="/move-plan" element={<MovePlanPage />} />
+              <Route path="/comparison" element={<ComparisonDashboard />} />
+              <Route path="/health-ndis" element={<HealthNdisPage />} />
+              <Route path="/packing" element={<PackingPage />} />
+              <Route path="/community" element={<CommunityPage />} />
+            </Routes>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

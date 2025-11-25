@@ -28,7 +28,10 @@ export default function CommunityPage() {
 
   return (
     <div>
-      <h2>Community</h2>
+      <div className="page-header">
+        <div className="breadcrumb">Family & Services / Community</div>
+        <h2>Community</h2>
+      </div>
       <div style={{ display: 'flex', gap: 24 }}>
         <div style={{ minWidth: 280 }}>
           <h3>Places</h3>

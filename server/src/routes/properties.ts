@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { Property } from '../types/entities';
 import {
   listProperties,
   getPropertyById,
@@ -9,7 +10,7 @@ import {
 
 const router = Router();
 
-function isNonEmptyString(v: any): v is string {
+function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
 }
 
@@ -43,14 +44,15 @@ router.post('/', async (req, res, next) => {
     if (!isNonEmptyString(address) || !isNonEmptyString(type)) {
       return res.status(400).json({ error: 'Missing required fields: address, type' });
     }
-    const created = await createProperty({
+    const payload: Omit<Property, 'id' | 'created_at' | 'updated_at'> = {
       user_id: 1,
       address: address.trim(),
       type: type.trim(),
       rent_weekly: rent_weekly ?? null,
       status: status ?? null,
       notes: notes ?? null,
-    } as any);
+    };
+    const created = await createProperty(payload);
     res.status(201).json(created);
   } catch (err) {
     next(err);
@@ -63,6 +65,27 @@ router.patch('/:id', async (req, res, next) => {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const payload = req.body ?? {};
+    const updated = await updateProperty(id, payload);
+    if (!updated) return res.status(404).json({ error: 'Not found' });
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/properties/:id
+router.put('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const body = req.body ?? {};
+    const payload: Partial<Property> = {
+      address: typeof body.address === 'string' ? body.address : undefined,
+      type: typeof body.type === 'string' ? body.type : undefined,
+      rent_weekly: body.rent_weekly ?? undefined,
+      status: body.status ?? undefined,
+      notes: body.notes ?? undefined,
+    };
     const updated = await updateProperty(id, payload);
     if (!updated) return res.status(404).json({ error: 'Not found' });
     res.json(updated);
