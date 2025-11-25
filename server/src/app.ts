@@ -18,6 +18,7 @@ import jobOptionsRouter from './routes/jobOptions';
 import childcareOptionsRouter from './routes/childcareOptions';
 import packingRouter from './routes/packing';
 import communityRouter from './routes/community';
+import path from 'path';
 
 const app = express();
 
@@ -48,5 +49,14 @@ app.use('/api/community', communityRouter);
 app.get('/', (req, res) => {
 	res.send('<h1>PDM Server is running</h1><p>This is the backend API. Visit your client app at <a href="http://localhost:3000">localhost:3000</a>.</p>');
 });
+
+// Serve static frontend in production
+const clientDist = path.join(__dirname, '../../client/dist');
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(clientDist));
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
+}
 
 export default app;

@@ -9,7 +9,8 @@
   "scripts": {
     "install:all": "npm install",
     "dev": "concurrently -k \"npm --workspace=server run dev\" \"npm --workspace=client run dev\"",
-    "build": "npm --workspace=client run build",
+    "build": "npm install && npm --workspace=client run build && npm --workspace=server run build",
+    "start": "npm --workspace=server run start",
     "format": "prettier --write .",
     "lint": "eslint --ext .js,.jsx .",
     "fix-bin-permissions:unix": "sh ./scripts/fix-bin-permissions.sh",
