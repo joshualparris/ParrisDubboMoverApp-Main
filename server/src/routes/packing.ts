@@ -5,12 +5,12 @@ import {
   createPackingArea,
   updatePackingArea,
   deletePackingArea,
-  listPackingBoxesByArea,
+  listPackingBoxes,
   getPackingBoxById,
   createPackingBox,
   updatePackingBox,
   deletePackingBox,
-  listPackingItemsByBox,
+  listPackingItems,
   createPackingItem,
   updatePackingItem,
   deletePackingItem,
@@ -52,7 +52,7 @@ router.delete('/areas/:id', async (req, res, next) => {
 router.get('/areas/:areaId/boxes', async (req, res, next) => {
   try {
     const areaId = Number(req.params.areaId);
-    const rows = await listPackingBoxesByArea(areaId);
+    const rows = await listPackingBoxes({ areaId });
     res.json(rows);
   } catch (err) { next(err); }
 });
@@ -84,7 +84,7 @@ router.delete('/boxes/:id', async (req, res, next) => {
 router.get('/boxes/:boxId/items', async (req, res, next) => {
   try {
     const boxId = Number(req.params.boxId);
-    const rows = await listPackingItemsByBox(boxId);
+    const rows = await listPackingItems({ boxId });
     res.json(rows);
   } catch (err) { next(err); }
 });

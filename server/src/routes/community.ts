@@ -5,7 +5,7 @@ import {
   createCommunityPlace,
   updateCommunityPlace,
   deleteCommunityPlace,
-  listCommunityVisitsByPlace,
+  listCommunityVisits,
   createCommunityVisit,
   deleteCommunityVisit,
 } from '../db/queries';
@@ -39,14 +39,20 @@ router.delete('/places/:id', async (req, res, next) => {
 });
 
 router.get('/places/:placeId/visits', async (req, res, next) => {
-  try { res.json(await listCommunityVisitsByPlace(Number(req.params.placeId))); } catch (err) { next(err); }
+  try {
+    const placeId = Number(req.params.placeId);
+    const visits = await listCommunityVisits({ placeId });
+    res.json(visits);
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.post('/places/:placeId/visits', async (req, res, next) => {
   try {
     const placeId = Number(req.params.placeId);
-    const { visited_at, notes } = req.body ?? {};
-    const created = await createCommunityVisit({ place_id: placeId, visited_at: visited_at ?? new Date().toISOString(), notes } as any);
+    const { visit_date, notes } = req.body ?? {};
+    const created = await createCommunityVisit({ place_id: placeId, visit_date: visit_date ?? new Date().toISOString(), notes } as any);
     res.status(201).json(created);
   } catch (err) { next(err); }
 });

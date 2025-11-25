@@ -91,6 +91,34 @@ export interface Document {
   updated_at: string;
 }
 
+export interface WorkLink {
+  id: number;
+  user_id: number;
+  title: string;
+  url: string;
+  description?: string | null;
+  category?: string | null;
+  icon_emoji?: string | null;
+  related_task_id?: number | null;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ComplianceItem {
+  id: number;
+  user_id: number;
+  subject_type: string;
+  subject_name: string;
+  category: string;
+  status: string;
+  due_date?: string | null;
+  completed_date?: string | null;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Provider {
   id: number;
   user_id: number;
@@ -214,22 +242,42 @@ export interface PackingItem {
   updated_at: string;
 }
 
+export type CommunityPlaceType = 'church' | 'parachurch' | 'school' | 'group' | 'other';
+
 export interface CommunityPlace {
   id: number;
   user_id: number;
   name: string;
-  address: string | null;
-  category: string | null;
-  notes: string | null;
+  type: CommunityPlaceType;
+  address?: string | null;
+  suburb?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postcode?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  kids_suitability_note?: string | null;
+  ms_friendly_note?: string | null;
+  overall_rating?: number | null;
+  is_current_home?: boolean | number;
+  notes?: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface CommunityVisit {
   id: number;
+  user_id?: number;
   place_id: number;
-  visited_at: string;
-  notes: string | null;
+  visit_date: string; // ISO date string
+  service_type?: string | null;
+  who_attended?: string | null;
+  vibe_summary?: string | null;
+  kids_experience?: string | null;
+  teaching_style?: string | null;
+  hospitality_note?: string | null;
+  rating?: number | null;
+  notes?: string | null;
   created_at: string;
   updated_at: string;
 }

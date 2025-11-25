@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
-import { Pool } from 'pg';
+import { Pool, QueryResultRow } from 'pg';
 
 let sqliteDb: InstanceType<typeof Database> | null = null;
 let pgPool: Pool | null = null;
@@ -78,10 +78,10 @@ export function getPgPool(): Pool {
   return pgPool;
 }
 
-export async function pgQuery<T = any>(text: string, params: any[] = []): Promise<T> {
+export async function pgQuery<T extends QueryResultRow = any>(text: string, params: any[] = []): Promise<T[]> {
   const pool = getPgPool();
   const res = await pool.query<T>(text, params);
-  return res.rows as unknown as T;
+  return (res.rows as unknown) as T[];
 }
 
 function toPg(text: string) {
