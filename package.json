@@ -7,9 +7,8 @@
     "server"
   ],
   "scripts": {
-    "install:all": "npm install",
     "dev": "concurrently -k \"npm --workspace=server run dev\" \"npm --workspace=client run dev\"",
-    "build": "npm install && npm --workspace=client run build && npm --workspace=server run build",
+    "build": "npm install --include=dev && npm --workspace=client run build && npm --workspace=server run build",
     "start": "npm --workspace=server run start",
     "format": "prettier --write .",
     "lint": "eslint --ext .js,.jsx .",
