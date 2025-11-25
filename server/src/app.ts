@@ -45,12 +45,7 @@ app.use('/api/childcare-options', childcareOptionsRouter);
 app.use('/api/packing', packingRouter);
 app.use('/api/community', communityRouter);
 
-// Default homepage route
-app.get('/', (req, res) => {
-	res.send('<h1>PDM Server is running</h1><p>This is the backend API. Visit your client app at <a href="http://localhost:3000">localhost:3000</a>.</p>');
-});
-
-// Serve static frontend in production
+// Serve static frontend in production — keep this last so API routes run first
 const clientDist = path.join(__dirname, '../../client/dist');
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(clientDist));
