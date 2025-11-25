@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "npm exec -- ts-node-dev --respawn --transpile-only src/index.ts",
-    "build": "tsc -p ."
+    "build": "tsc",
+    "start": "node dist/index.js"
   },
   "dependencies": {
     "@types/multer": "^2.0.0",
