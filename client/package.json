@@ -3,9 +3,9 @@
   "private": true,
   "version": "0.0.1",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "dev": "npm exec -- vite",
+    "build": "npm exec -- vite build",
+    "preview": "npm exec -- vite preview"
   },
   "resolutions": {
     "react": "19.2.0",

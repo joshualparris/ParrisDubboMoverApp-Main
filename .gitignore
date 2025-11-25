@@ -8,3 +8,20 @@ client/node_modules/
 server/node_modules/
 /.DS_Store
 server/uploads
+
+# Ignore installer binaries and PDFs
+node-v*.msi
+*.pdf
+
+# Ignore DB data and uploads
+server/data/
+server/uploads/
+
+# Client build outputs
+client/dist/
+client/build/
+
+# Coverage and editor settings
+coverage/
+.vscode/
+.idea/

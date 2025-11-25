@@ -1,4 +1,3 @@
-// ...existing code...
 import * as React from 'react';
 import { Routes, Route, Link } from 'react-router-dom';
 import Home from './pages/Home';
@@ -11,6 +10,9 @@ import HealthNdisPage from './pages/HealthNdisPage';
 import NextActionsPage from './pages/NextActionsPage';
 import { DcsWorkPage } from './pages/DcsWorkPage';
 import { CompliancePage } from './pages/CompliancePage';
+import JobOptionsPage from './pages/JobOptionsPage';
+import ChildcareOptionsPage from './pages/ChildcareOptionsPage';
+import PropertiesPage from './pages/PropertiesPage';
 
 export default function App() {
   return (
@@ -21,6 +23,9 @@ export default function App() {
           <Link to="/">Home</Link>
           <Link to="/dashboard">Dashboard</Link>
           <Link to="/next-actions">What Next?</Link>
+          <Link to="/properties">Properties</Link>
+          <Link to="/job-options">Job Options</Link>
+          <Link to="/childcare-options">Childcare</Link>
           <Link to="/dcs">DCS Work Hub</Link>
           <Link to="/tasks">Tasks</Link>
           <Link to="/documents">Documents</Link>
@@ -34,7 +39,10 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/next-actions" element={<NextActionsPage />} />
+          <Route path="/job-options" element={<JobOptionsPage />} />
+          <Route path="/childcare-options" element={<ChildcareOptionsPage />} />
           <Route path="/dcs" element={<DcsWorkPage />} />
+          <Route path="/properties" element={<PropertiesPage />} />
           <Route path="/compliance" element={<CompliancePage />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/documents" element={<DocumentsPage />} />

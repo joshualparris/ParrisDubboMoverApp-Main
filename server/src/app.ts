@@ -13,6 +13,9 @@ import complianceItemsRouter from './routes/compliance-items';
 import './db';
 
 import workLinksRouter from './routes/work-links';
+import propertiesRouter from './routes/properties';
+import jobOptionsRouter from './routes/jobOptions';
+import childcareOptionsRouter from './routes/childcareOptions';
 
 const app = express();
 
@@ -33,6 +36,9 @@ app.use('/api/next-actions', nextActionsRouter);
 app.use('/api/compliance-items', complianceItemsRouter);
 
 app.use('/api/work-links', workLinksRouter);
+app.use('/api/properties', propertiesRouter);
+app.use('/api/job-options', jobOptionsRouter);
+app.use('/api/childcare-options', childcareOptionsRouter);
 
 // Default homepage route
 app.get('/', (req, res) => {

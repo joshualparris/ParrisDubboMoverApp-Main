@@ -1,46 +1,74 @@
 ## Quick context — what this repo is
 
-This repo is a small Vite + React (TypeScript) client app that implements the ParrisDubboMover (PDM) UI and a set of client-side API adapters. There is also a detailed design blueprint under `docs/ParrisDubboMover (PDM) Design Blueprint.docx.txt` describing the server, data model and expected API endpoints.
+This repo is the ParrisDubboMover (PDM) app: a Vite + React (TypeScript) frontend in `client/` and a Node/Express + TypeScript backend in `server/` (SQLite via `better-sqlite3`). See `docs/ParrisDubboMover (PDM) Design Blueprint.docx.txt` for the product spec.
 
 Key facts an AI assistant should know immediately:
 
 - The frontend lives in `client/` (Vite + React + TypeScript). `client/package.json` scripts: `dev`, `build`, `preview`.
-- Root `package.json` declares a workspace `server` but there is no `server/` folder in this snapshot — the full backend is NOT present. The root `dev` script runs both workspaces via `concurrently` and will fail unless a `server` workspace is added.
+- The backend lives in `server/` (Express + TypeScript). `server/package.json` scripts: `dev` (ts-node-dev) and `build` (tsc).
+- Root `package.json` uses workspaces and exposes a convenience `npm run dev` which runs both server and client via `concurrently`.
 
 ## How to run & debug (practical)
 
-- Start only the client (works in this repo):
-  - From repo root: npm --workspace=client run dev
-  - Or from client: cd client; npm run dev
-- Building production assets: npm --workspace=client run build
-- If you add the server later, the root script uses: npm run dev (runs both client + server via concurrently)
+- Start both (root):
+
+  PowerShell:
+
+  $env:PORT=5100; npm run dev
+
+  (The root `dev` launches server and client; server defaults to port `5100`.)
+
+- Start only server:
+
+  PowerShell:
+
+  $env:PORT=5100; npm --workspace=server run dev
+
+- Start only client:
+
+  PowerShell:
+
+  npm --workspace=client run dev
+
+- Build client production assets:
+
+  npm --workspace=client run build
+
+Notes:
+- Vite dev server listens on `3000` and proxies `/api` to the backend. See `client/vite.config.ts` for the proxy target (default `http://localhost:5100`).
+- The server listens on `PORT` (default `5100`) in `server/src/index.ts`.
 
 ## Important integration patterns & assumptions (copyable examples)
 
-- API layer: `client/src/api/client.ts` and `client/src/api/base.ts` centralize requests. All client routes call `/api/*` relative to the app host. Example:
-  - fetchTasks(domainId) => calls `/api/tasks/domain/{domainId}` (see `client/src/api/tasks.ts`). It will throw if missing required params.
-  - createTask(...) currently injects `user_id: 1` locally before POSTing — this is a deliberate single-user shortcut to watch for if you add backend auth.
-  - File uploads: `uploadDocument` posts a FormData to `/api/documents/upload` (not using `apiRequest` — uses raw fetch).
-  - Error handling: `apiRequest` throws with the server response text when res.ok === false — propagate errors accordingly.
+- API layer: `client/src/api/client.ts` centralizes JSON requests as `apiRequest`. Most client adapters live in `client/src/api/*` and use that helper.
+  - Example: `fetchTasks(domainId)` calls `/api/tasks/domain/{domainId}` (see `client/src/api/tasks.ts`). It throws when required params are missing.
+  - Single-user shortcut: many client calls and server seed data assume `user_id = 1` for now (seeded in `server/src/db/schema.ts`). Be careful when adding auth.
+  - File uploads: `client` uploads documents via `FormData` to `/api/documents/upload` (see `client/src/api/documents.ts` & `server/src/routes/documents.ts`). The server uses `multer` and `server/src/services/documentTextExtractor.ts` to extract text (DOCX/TXT supported; PDF parsing is conditional—may be skipped without DOM polyfills).
+  - Error handling: `apiRequest` throws with server response text when `res.ok === false` — caller should catch and display the message.
 
 ## Patterns & conventions to follow when editing
 
-- Frontend is TypeScript + minimal CSS (see `client/src/styles.css`). Keep small components in `client/src/components` and page-level containers in `client/src/pages`.
-- Keep API usage in `client/src/api/*` and update types in `client/src/types/*` when backend contracts change.
-- Prefer using `apiRequest` from `client.ts` for JSON APIs; use FormData + fetch for file uploads when necessary.
-- When adding backend routes, match these expected endpoints & methods: `/api/tasks`, `/api/tasks/:id`, `/api/tasks/:id/status (PATCH)`, `/api/tasks/domain/:domainId`, `/api/documents`, `/api/documents/upload`, `/api/domains`, `/api/trips` (see `client/src/api/*` files for exact expectations).
+- Frontend: keep small UI pieces in `client/src/components/` and page containers in `client/src/pages/`.
+- API adapters: add or update adapters in `client/src/api/*` and update types in `client/src/types/*`.
+- Server routes: place route handlers in `server/src/routes/*` and export a router default; mount the router in `server/src/app.ts` (see existing patterns: `tasks.ts`, `work-links.ts`, `compliance-items.ts`).
+- DB schema/migrations: modify `server/src/db/schema.ts` (CREATE TABLE) and ensure `server/src/db/migrate.ts` runs your new schema code on startup (migrations run via `initDb()` in `server/src/index.ts`).
+- Naming & IDs: DB tables use `INTEGER PRIMARY KEY AUTOINCREMENT`. Many helpers default to `user_id = 1` — change carefully.
 
 ## Where to look first as a contributor
 
-- `client/src/api/` — main contract between frontend & backend: change here if you alter endpoints.
-- `client/src/types` — canonical types for entities like Task, Domain, Document.
-- `client/src/pages/*` and `client/src/components/*` — UI behaviour and usage examples.
-- `docs/ParrisDubboMover (PDM) Design Blueprint.docx.txt` — high-level architecture, data model, and server design. Use it as the primary spec for building backend endpoints.
+- `client/src/api/` — main contract between frontend & backend.
+- `client/src/types/` — canonical TypeScript types used across the UI.
+- `server/src/db/` — schema (`schema.ts`), migrations (`migrate.ts`) and queries/helpers (`queries.ts`).
+- `server/src/routes/` — example routes to copy patterns from (`tasks.ts`, `documents.ts`, `work-links.ts`, `compliance-items.ts`).
+- `docs/ParrisDubboMover (PDM) Design Blueprint.docx.txt` — feature spec and domain model.
+- `docs/IMPLEMENTATION_FEATURES_CHECKLIST.md` — current implementation status and gaps (useful to pick next tasks).
 
-## Common gotchas & TODOs for maintainers/agents
+## Common gotchas & troubleshooting
 
-- Root-level `npm run dev` expects a `server` workspace that is missing. Use the client-only dev command while backend is absent.
-- There are no unit tests configured — add tests (`vitest`/`jest`) if you introduce critical business logic.
-- Linting is intentionally empty (`lint` prints a placeholder); maintainers should add an ESLint/formatter config before enforcing rules.
+- Database file and migrations: DB file is created at `server/data/pdm.db` when the server starts. If migrations fail, check `server/src/db/migrate.ts` and `server/src/db/schema.ts`.
+- Native build for `better-sqlite3`: this package has native binaries — if `npm install` fails on your platform, run the helper scripts `scripts/fix-bin-permissions.ps1` (Windows) or `scripts/fix-bin-permissions.sh` (Unix) and ensure build tools are available.
+- PDF parsing can crash in Node environments missing certain DOM APIs; if document text extraction for PDFs is required, add a Node canvas/polyfill or run PDF parsing in a separate worker as noted in `server/src/services/documentTextExtractor.ts`.
+- Port conflicts: change the server port via `PORT` env var (PowerShell example shown above) and update `client/vite.config.ts` proxy target if necessary.
+- Seed data: the repo seeds a default user (id=1) and domain rows on first run — check `server/src/db/schema.ts` for seeded entries.
 
-If anything here is unclear or you want this tailored more (e.g., add backend coding conventions or a checklist for adding a DB-backed server), tell me which area to expand and I’ll iterate. ✅
+If you'd like, I can expand this into a longer developer onboarding doc (runbook, common PR checklist, and CI steps).

@@ -8,8 +8,12 @@
   ],
   "scripts": {
     "install:all": "npm install",
-    "dev": "npm --workspace=client run dev",
-    "build": "npm --workspace=client run build"
+    "dev": "concurrently -k \"npm --workspace=server run dev\" \"npm --workspace=client run dev\"",
+    "build": "npm --workspace=client run build",
+    "format": "prettier --write .",
+    "lint": "eslint --ext .js,.jsx .",
+    "fix-bin-permissions:unix": "sh ./scripts/fix-bin-permissions.sh",
+    "fix-bin-permissions:windows": "powershell -ExecutionPolicy Bypass -File ./scripts/fix-bin-permissions.ps1"
   },
   "devDependencies": {
     "concurrently": "^8.2.0",
