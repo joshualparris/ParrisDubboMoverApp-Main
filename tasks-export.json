@@ -1,0 +1,21 @@
+[
+  {
+    "id": 5,
+    "user_id": 1,
+    "domain_id": 1,
+    "title": "Get landlord insurance for 53 Buckland Street",
+    "description": "Get landlord insurance for 53 Buckland Street",
+    "status": "pending",
+    "priority": 2,
+    "due_date": "2026-01-01",
+    "origin_doc_id": null,
+    "related_property_id": null,
+    "related_job_id": null,
+    "related_provider_id": null,
+    "related_childcare_id": null,
+    "related_trip_id": null,
+    "notes": null,
+    "created_at": "2025-11-24T11:42:12.127Z",
+    "updated_at": "2025-11-24T11:42:12.127Z"
+  }
+]

@@ -1,0 +1,18 @@
+{
+  "name": "pdm-parris-dubbo-mover",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "install:all": "npm install",
+    "dev": "npm --workspace=client run dev",
+    "build": "npm --workspace=client run build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0",
+    "npm-force-resolutions": "^0.0.10"
+  }
+}

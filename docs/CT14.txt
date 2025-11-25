@@ -1,0 +1,3058 @@
+````text
+CT14 – Church & Community Hub (Dubbo Protestant Network)
+
+You are an expert full-stack TypeScript engineer.
+
+The existing `pdm-parris-dubbo-mover` project already has:
+
+- Backend (`server/`):
+  - Node + Express + TypeScript.
+  - SQLite DB with tables (from earlier CTs):
+    - `users`, `domains`, `tasks`, `documents`
+    - `properties`, `job_options`, `childcare_options`
+    - `providers`, `appointments`
+    - `trips`, `trip_assignments`
+    - `work_links`, `compliance_items`
+    - `packing_areas`, `packing_boxes`, `packing_items`
+    - `task_explanations`
+  - REST APIs:
+    - `/api/tasks`, `/api/next_actions`
+    - `/api/documents`
+    - `/api/properties`, `/api/job-options`, `/api/childcare-options`
+    - `/api/providers`, `/api/appointments`
+    - `/api/trips`, `/api/trip-assignments`
+    - `/api/work-links`, `/api/compliance-items`
+    - `/api/packing-areas`, `/api/packing-boxes`, `/api/packing-items`
+    - `/api/tasks/:id/why`, `/api/tasks/:id/why/regenerate`
+- Frontend (`client/`):
+  - React + TypeScript + Vite.
+  - Navigation + routes:
+    - `/` (Dashboard)
+    - `/tasks`
+    - `/documents`
+    - `/move-plan`
+    - `/housing`
+    - `/kristy-work`
+    - `/childcare`
+    - `/health-ndis`
+    - `/packing`
+    - `/dcs`
+    - `/compliance`
+    - `/next-actions`
+  - Shared layout, simple modal components, and basic CSS in `index.css`.
+
+Do **not** break any of the existing behaviour or endpoints.
+
+Your job in CT14: implement a **“Church & Community” Hub** based on Josh’s Dubbo research (especially the “Dubbo Protestant Network – Hubs & Bridges” document). This should help Josh & Kristy:
+
+- See an organised list of potential churches and Christian communities in Dubbo.
+- Shortlist favourites.
+- Log visits (date, service type, how it felt for each family member).
+- Mark which community they finally “settle” at.
+- Keep this very simple and low-friction for a tired parent on a phone.
+
+We’ll add:
+
+- Backend:
+  - `community_places` and `community_visits` tables.
+  - REST APIs to CRUD places and visits.
+- Frontend:
+  - A `/community` page with:
+    - Filters (type, status).
+    - Cards for each place (with shortlist + “current home” toggles).
+    - A visit history sidebar for the selected place.
+    - Simple add/edit forms.
+
+Keep the UX minimal but clear.
+
+---
+
+## 1. Backend – DB schema for church & community
+
+Work in `server/`.
+
+### 1.1 Types
+
+In `server/src/types/entities.ts`, add:
+
+```ts
+export type CommunityPlaceType =
+  | 'church'
+  | 'parachurch'
+  | 'school'
+  | 'group'
+  | 'other';
+
+export type CommunityPlaceStatus =
+  | 'candidate'
+  | 'shortlisted'
+  | 'visited'
+  | 'home';
+
+export interface CommunityPlace {
+  id: number;
+  user_id: number;
+  name: string;
+  type: CommunityPlaceType;
+  denomination: string | null;     // e.g. Anglican, Baptist, Presbyterian
+  style: string | null;            // e.g. "contemporary", "liturgical"
+  address: string | null;
+  suburb: string | null;
+  website: string | null;
+  contact_name: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+
+  status: CommunityPlaceStatus;    // candidate/shortlisted/visited/home
+  hub_role: string | null;         // e.g. 'hub', 'bridge', from Dubbo Protestant Network doc
+  tags: string | null;             // comma-separated tags for now
+
+  kids_suitability_note: string | null;
+  ms_friendly_note: string | null; // any note about accessibility / fatigue / AC
+
+  overall_rating: number | null;   // 1–5
+  is_current_home: number;         // 0/1 for "this is our current main church"
+
+  notes: string | null;
+
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CommunityVisit {
+  id: number;
+  user_id: number;
+  place_id: number;
+  visit_date: string;            // ISO date string yyyy-mm-dd
+  service_type: string | null;   // e.g. "Sunday AM", "Evening service", "Youth"
+  who_attended: string | null;   // e.g. "Josh + Kristy + kids"
+  vibe_summary: string | null;   // short text
+  kids_experience: string | null;
+  teaching_style: string | null;
+  hospitality_note: string | null;
+  rating: number | null;         // 1–5
+
+  created_at: string;
+  updated_at: string;
+}
+````
+
+You can also add DTOs in the same file or a `dtos.ts` file:
+
+```ts
+export interface NewCommunityPlaceInput {
+  user_id: number;
+  name: string;
+  type?: CommunityPlaceType;
+  denomination?: string | null;
+  style?: string | null;
+  address?: string | null;
+  suburb?: string | null;
+  website?: string | null;
+  contact_name?: string | null;
+  contact_email?: string | null;
+  contact_phone?: string | null;
+  status?: CommunityPlaceStatus;
+  hub_role?: string | null;
+  tags?: string | null;
+  kids_suitability_note?: string | null;
+  ms_friendly_note?: string | null;
+  overall_rating?: number | null;
+  is_current_home?: boolean | number;
+  notes?: string | null;
+}
+
+export interface UpdateCommunityPlaceInput {
+  name?: string;
+  type?: CommunityPlaceType;
+  denomination?: string | null;
+  style?: string | null;
+  address?: string | null;
+  suburb?: string | null;
+  website?: string | null;
+  contact_name?: string | null;
+  contact_email?: string | null;
+  contact_phone?: string | null;
+  status?: CommunityPlaceStatus;
+  hub_role?: string | null;
+  tags?: string | null;
+  kids_suitability_note?: string | null;
+  ms_friendly_note?: string | null;
+  overall_rating?: number | null;
+  is_current_home?: boolean | number;
+  notes?: string | null;
+}
+
+export interface NewCommunityVisitInput {
+  user_id: number;
+  place_id: number;
+  visit_date: string;
+  service_type?: string | null;
+  who_attended?: string | null;
+  vibe_summary?: string | null;
+  kids_experience?: string | null;
+  teaching_style?: string | null;
+  hospitality_note?: string | null;
+  rating?: number | null;
+}
+
+export interface UpdateCommunityVisitInput {
+  visit_date?: string;
+  service_type?: string | null;
+  who_attended?: string | null;
+  vibe_summary?: string | null;
+  kids_experience?: string | null;
+  teaching_style?: string | null;
+  hospitality_note?: string | null;
+  rating?: number | null;
+}
+```
+
+### 1.2 Migrations
+
+In your DB initialisation / migrations (where other `CREATE TABLE` statements live), add:
+
+```sql
+CREATE TABLE IF NOT EXISTS community_places (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  denomination TEXT,
+  style TEXT,
+  address TEXT,
+  suburb TEXT,
+  website TEXT,
+  contact_name TEXT,
+  contact_email TEXT,
+  contact_phone TEXT,
+  status TEXT NOT NULL,
+  hub_role TEXT,
+  tags TEXT,
+  kids_suitability_note TEXT,
+  ms_friendly_note TEXT,
+  overall_rating INTEGER,
+  is_current_home INTEGER NOT NULL DEFAULT 0,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_community_places_status
+  ON community_places(status);
+
+CREATE INDEX IF NOT EXISTS idx_community_places_type
+  ON community_places(type);
+
+CREATE TABLE IF NOT EXISTS community_visits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  place_id INTEGER NOT NULL,
+  visit_date TEXT NOT NULL,
+  service_type TEXT,
+  who_attended TEXT,
+  vibe_summary TEXT,
+  kids_experience TEXT,
+  teaching_style TEXT,
+  hospitality_note TEXT,
+  rating INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (place_id) REFERENCES community_places(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_community_visits_place_id
+  ON community_visits(place_id);
+```
+
+Run migrations on startup as you already do.
+
+---
+
+## 2. Backend – DB helper functions
+
+In `server/src/db/queries.ts` (or wherever you keep query helpers):
+
+1. Import new types:
+
+```ts
+import type {
+  CommunityPlace,
+  CommunityVisit,
+  NewCommunityPlaceInput,
+  UpdateCommunityPlaceInput,
+  NewCommunityVisitInput,
+  UpdateCommunityVisitInput,
+} from '../types/entities';
+```
+
+2. Add parameter interfaces:
+
+```ts
+export interface ListCommunityPlacesParams {
+  status?: string;          // 'candidate' | 'shortlisted' | 'visited' | 'home'
+  type?: string;            // 'church', etc.
+  search?: string;          // name/denomination partial match
+  limit?: number;
+}
+
+export interface ListCommunityVisitsParams {
+  placeId: number;
+  limit?: number;
+}
+```
+
+3. Implement functions:
+
+```ts
+export async function listCommunityPlaces(
+  params: ListCommunityPlacesParams = {}
+): Promise<CommunityPlace[]> {
+  const db = getDb();
+  const limit = params.limit && params.limit > 0 ? params.limit : 200;
+
+  let sql = `
+    SELECT *
+    FROM community_places
+    WHERE user_id = 1
+  `;
+  const bindings: any[] = [];
+
+  if (params.status) {
+    sql += ' AND status = ?';
+    bindings.push(params.status);
+  }
+
+  if (params.type) {
+    sql += ' AND type = ?';
+    bindings.push(params.type);
+  }
+
+  if (params.search && params.search.trim().length > 0) {
+    sql += ' AND (LOWER(name) LIKE ? OR LOWER(denomination) LIKE ?)';
+    const like = `%${params.search.toLowerCase()}%`;
+    bindings.push(like, like);
+  }
+
+  sql += `
+    ORDER BY
+      is_current_home DESC,
+      CASE status
+        WHEN 'home' THEN 0
+        WHEN 'shortlisted' THEN 1
+        WHEN 'visited' THEN 2
+        ELSE 3
+      END,
+      name ASC
+    LIMIT ?
+  `;
+  bindings.push(limit);
+
+  const rows = db.prepare(sql).all(...bindings) as any[];
+  return rows.map((row) => ({
+    id: row.id,
+    user_id: row.user_id,
+    name: row.name,
+    type: row.type,
+    denomination: row.denomination,
+    style: row.style,
+    address: row.address,
+    suburb: row.suburb,
+    website: row.website,
+    contact_name: row.contact_name,
+    contact_email: row.contact_email,
+    contact_phone: row.contact_phone,
+    status: row.status,
+    hub_role: row.hub_role,
+    tags: row.tags,
+    kids_suitability_note: row.kids_suitability_note,
+    ms_friendly_note: row.ms_friendly_note,
+    overall_rating: row.overall_rating,
+    is_current_home: row.is_current_home,
+    notes: row.notes,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+}
+
+export async function getCommunityPlaceById(id: number): Promise<CommunityPlace | null> {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT * FROM community_places WHERE id = ? AND user_id = 1`
+    )
+    .get(id) as any | undefined;
+
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    name: row.name,
+    type: row.type,
+    denomination: row.denomination,
+    style: row.style,
+    address: row.address,
+    suburb: row.suburb,
+    website: row.website,
+    contact_name: row.contact_name,
+    contact_email: row.contact_email,
+    contact_phone: row.contact_phone,
+    status: row.status,
+    hub_role: row.hub_role,
+    tags: row.tags,
+    kids_suitability_note: row.kids_suitability_note,
+    ms_friendly_note: row.ms_friendly_note,
+    overall_rating: row.overall_rating,
+    is_current_home: row.is_current_home,
+    notes: row.notes,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export async function createCommunityPlace(
+  input: NewCommunityPlaceInput
+): Promise<CommunityPlace> {
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  const type = input.type ?? 'church';
+  const status = input.status ?? 'candidate';
+  const isCurrentHomeFlag =
+    typeof input.is_current_home === 'boolean'
+      ? input.is_current_home
+        ? 1
+        : 0
+      : input.is_current_home
+      ? 1
+      : 0;
+
+  const stmt = db.prepare(`
+    INSERT INTO community_places
+      (user_id, name, type, denomination, style, address, suburb, website,
+       contact_name, contact_email, contact_phone,
+       status, hub_role, tags,
+       kids_suitability_note, ms_friendly_note,
+       overall_rating, is_current_home, notes,
+       created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const info = stmt.run(
+    input.user_id,
+    input.name,
+    type,
+    input.denomination ?? null,
+    input.style ?? null,
+    input.address ?? null,
+    input.suburb ?? null,
+    input.website ?? null,
+    input.contact_name ?? null,
+    input.contact_email ?? null,
+    input.contact_phone ?? null,
+    status,
+    input.hub_role ?? null,
+    input.tags ?? null,
+    input.kids_suitability_note ?? null,
+    input.ms_friendly_note ?? null,
+    input.overall_rating ?? null,
+    isCurrentHomeFlag,
+    input.notes ?? null,
+    now,
+    now
+  );
+
+  const id = Number(info.lastInsertRowid);
+  const row = db
+    .prepare(`SELECT * FROM community_places WHERE id = ?`)
+    .get(id) as any;
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    name: row.name,
+    type: row.type,
+    denomination: row.denomination,
+    style: row.style,
+    address: row.address,
+    suburb: row.suburb,
+    website: row.website,
+    contact_name: row.contact_name,
+    contact_email: row.contact_email,
+    contact_phone: row.contact_phone,
+    status: row.status,
+    hub_role: row.hub_role,
+    tags: row.tags,
+    kids_suitability_note: row.kids_suitability_note,
+    ms_friendly_note: row.ms_friendly_note,
+    overall_rating: row.overall_rating,
+    is_current_home: row.is_current_home,
+    notes: row.notes,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export async function updateCommunityPlace(
+  id: number,
+  input: UpdateCommunityPlaceInput
+): Promise<CommunityPlace | null> {
+  const db = getDb();
+  const existing = db
+    .prepare(`SELECT * FROM community_places WHERE id = ? AND user_id = 1`)
+    .get(id) as any | undefined;
+
+  if (!existing) return null;
+
+  const now = new Date().toISOString();
+
+  const updated = {
+    name: input.name ?? existing.name,
+    type: input.type ?? existing.type,
+    denomination:
+      input.denomination !== undefined ? input.denomination : existing.denomination,
+    style: input.style !== undefined ? input.style : existing.style,
+    address: input.address !== undefined ? input.address : existing.address,
+    suburb: input.suburb !== undefined ? input.suburb : existing.suburb,
+    website: input.website !== undefined ? input.website : existing.website,
+    contact_name:
+      input.contact_name !== undefined ? input.contact_name : existing.contact_name,
+    contact_email:
+      input.contact_email !== undefined ? input.contact_email : existing.contact_email,
+    contact_phone:
+      input.contact_phone !== undefined ? input.contact_phone : existing.contact_phone,
+    status: input.status ?? existing.status,
+    hub_role: input.hub_role !== undefined ? input.hub_role : existing.hub_role,
+    tags: input.tags !== undefined ? input.tags : existing.tags,
+    kids_suitability_note:
+      input.kids_suitability_note !== undefined
+        ? input.kids_suitability_note
+        : existing.kids_suitability_note,
+    ms_friendly_note:
+      input.ms_friendly_note !== undefined
+        ? input.ms_friendly_note
+        : existing.ms_friendly_note,
+    overall_rating:
+      input.overall_rating !== undefined
+        ? input.overall_rating
+        : existing.overall_rating,
+    is_current_home:
+      input.is_current_home !== undefined
+        ? typeof input.is_current_home === 'boolean'
+          ? input.is_current_home
+            ? 1
+            : 0
+          : input.is_current_home
+        : existing.is_current_home,
+    notes: input.notes !== undefined ? input.notes : existing.notes,
+  };
+
+  // If setting is_current_home=1, clear others for this user
+  if (updated.is_current_home === 1 && existing.is_current_home !== 1) {
+    db.prepare(
+      `UPDATE community_places
+       SET is_current_home = 0, updated_at = ?
+       WHERE user_id = 1`
+    ).run(now);
+  }
+
+  db.prepare(
+    `
+    UPDATE community_places
+    SET name = ?, type = ?, denomination = ?, style = ?, address = ?, suburb = ?,
+        website = ?, contact_name = ?, contact_email = ?, contact_phone = ?,
+        status = ?, hub_role = ?, tags = ?,
+        kids_suitability_note = ?, ms_friendly_note = ?,
+        overall_rating = ?, is_current_home = ?, notes = ?, updated_at = ?
+    WHERE id = ? AND user_id = 1
+  `
+  ).run(
+    updated.name,
+    updated.type,
+    updated.denomination,
+    updated.style,
+    updated.address,
+    updated.suburb,
+    updated.website,
+    updated.contact_name,
+    updated.contact_email,
+    updated.contact_phone,
+    updated.status,
+    updated.hub_role,
+    updated.tags,
+    updated.kids_suitability_note,
+    updated.ms_friendly_note,
+    updated.overall_rating,
+    updated.is_current_home,
+    updated.notes,
+    now,
+    id
+  );
+
+  const row = db
+    .prepare(`SELECT * FROM community_places WHERE id = ?`)
+    .get(id) as any;
+
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    name: row.name,
+    type: row.type,
+    denomination: row.denomination,
+    style: row.style,
+    address: row.address,
+    suburb: row.suburb,
+    website: row.website,
+    contact_name: row.contact_name,
+    contact_email: row.contact_email,
+    contact_phone: row.contact_phone,
+    status: row.status,
+    hub_role: row.hub_role,
+    tags: row.tags,
+    kids_suitability_note: row.kids_suitability_note,
+    ms_friendly_note: row.ms_friendly_note,
+    overall_rating: row.overall_rating,
+    is_current_home: row.is_current_home,
+    notes: row.notes,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export async function deleteCommunityPlace(id: number): Promise<void> {
+  const db = getDb();
+  db.prepare(`DELETE FROM community_places WHERE id = ? AND user_id = 1`).run(id);
+}
+```
+
+Now visits:
+
+```ts
+export async function listCommunityVisits(
+  params: ListCommunityVisitsParams
+): Promise<CommunityVisit[]> {
+  const db = getDb();
+  const limit = params.limit && params.limit > 0 ? params.limit : 50;
+
+  const rows = db
+    .prepare(
+      `
+      SELECT *
+      FROM community_visits
+      WHERE user_id = 1 AND place_id = ?
+      ORDER BY visit_date DESC, id DESC
+      LIMIT ?
+    `
+    )
+    .all(params.placeId, limit) as any[];
+
+  return rows.map((row) => ({
+    id: row.id,
+    user_id: row.user_id,
+    place_id: row.place_id,
+    visit_date: row.visit_date,
+    service_type: row.service_type,
+    who_attended: row.who_attended,
+    vibe_summary: row.vibe_summary,
+    kids_experience: row.kids_experience,
+    teaching_style: row.teaching_style,
+    hospitality_note: row.hospitality_note,
+    rating: row.rating,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+}
+
+export async function getCommunityVisitById(id: number): Promise<CommunityVisit | null> {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT * FROM community_visits WHERE id = ? AND user_id = 1`
+    )
+    .get(id) as any | undefined;
+
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    place_id: row.place_id,
+    visit_date: row.visit_date,
+    service_type: row.service_type,
+    who_attended: row.who_attended,
+    vibe_summary: row.vibe_summary,
+    kids_experience: row.kids_experience,
+    teaching_style: row.teaching_style,
+    hospitality_note: row.hospitality_note,
+    rating: row.rating,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export async function createCommunityVisit(
+  input: NewCommunityVisitInput
+): Promise<CommunityVisit> {
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  const stmt = db.prepare(`
+    INSERT INTO community_visits
+      (user_id, place_id, visit_date, service_type, who_attended,
+       vibe_summary, kids_experience, teaching_style, hospitality_note,
+       rating, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const info = stmt.run(
+    input.user_id,
+    input.place_id,
+    input.visit_date,
+    input.service_type ?? null,
+    input.who_attended ?? null,
+    input.vibe_summary ?? null,
+    input.kids_experience ?? null,
+    input.teaching_style ?? null,
+    input.hospitality_note ?? null,
+    input.rating ?? null,
+    now,
+    now
+  );
+
+  const id = Number(info.lastInsertRowid);
+  const row = db
+    .prepare(`SELECT * FROM community_visits WHERE id = ?`)
+    .get(id) as any;
+
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    place_id: row.place_id,
+    visit_date: row.visit_date,
+    service_type: row.service_type,
+    who_attended: row.who_attended,
+    vibe_summary: row.vibe_summary,
+    kids_experience: row.kids_experience,
+    teaching_style: row.teaching_style,
+    hospitality_note: row.hospitality_note,
+    rating: row.rating,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export async function updateCommunityVisit(
+  id: number,
+  input: UpdateCommunityVisitInput
+): Promise<CommunityVisit | null> {
+  const db = getDb();
+  const existing = db
+    .prepare(`SELECT * FROM community_visits WHERE id = ? AND user_id = 1`)
+    .get(id) as any | undefined;
+
+  if (!existing) return null;
+
+  const now = new Date().toISOString();
+
+  const updated = {
+    visit_date: input.visit_date ?? existing.visit_date,
+    service_type:
+      input.service_type !== undefined ? input.service_type : existing.service_type,
+    who_attended:
+      input.who_attended !== undefined ? input.who_attended : existing.who_attended,
+    vibe_summary:
+      input.vibe_summary !== undefined ? input.vibe_summary : existing.vibe_summary,
+    kids_experience:
+      input.kids_experience !== undefined
+        ? input.kids_experience
+        : existing.kids_experience,
+    teaching_style:
+      input.teaching_style !== undefined
+        ? input.teaching_style
+        : existing.teaching_style,
+    hospitality_note:
+      input.hospitality_note !== undefined
+        ? input.hospitality_note
+        : existing.hospitality_note,
+    rating:
+      input.rating !== undefined ? input.rating : existing.rating,
+  };
+
+  db.prepare(
+    `
+    UPDATE community_visits
+    SET visit_date = ?, service_type = ?, who_attended = ?,
+        vibe_summary = ?, kids_experience = ?, teaching_style = ?,
+        hospitality_note = ?, rating = ?, updated_at = ?
+    WHERE id = ? AND user_id = 1
+  `
+  ).run(
+    updated.visit_date,
+    updated.service_type,
+    updated.who_attended,
+    updated.vibe_summary,
+    updated.kids_experience,
+    updated.teaching_style,
+    updated.hospitality_note,
+    updated.rating,
+    now,
+    id
+  );
+
+  const row = db
+    .prepare(`SELECT * FROM community_visits WHERE id = ?`)
+    .get(id) as any;
+
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    place_id: row.place_id,
+    visit_date: row.visit_date,
+    service_type: row.service_type,
+    who_attended: row.who_attended,
+    vibe_summary: row.vibe_summary,
+    kids_experience: row.kids_experience,
+    teaching_style: row.teaching_style,
+    hospitality_note: row.hospitality_note,
+    rating: row.rating,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export async function deleteCommunityVisit(id: number): Promise<void> {
+  const db = getDb();
+  db.prepare(`DELETE FROM community_visits WHERE id = ? AND user_id = 1`).run(id);
+}
+```
+
+---
+
+## 3. Backend routes
+
+Create:
+
+* `server/src/routes/communityPlaces.ts`
+* `server/src/routes/communityVisits.ts`
+
+### 3.1 `/api/community-places`
+
+`server/src/routes/communityPlaces.ts`:
+
+```ts
+import { Router } from 'express';
+import {
+  listCommunityPlaces,
+  getCommunityPlaceById,
+  createCommunityPlace,
+  updateCommunityPlace,
+  deleteCommunityPlace,
+} from '../db/queries';
+import type { CommunityPlaceStatus, CommunityPlaceType } from '../types/entities';
+
+const router = Router();
+
+function isNonEmptyString(v: any): v is string {
+  return typeof v === 'string' && v.trim().length > 0;
+}
+
+// GET /api/community-places
+router.get('/', async (req, res, next) => {
+  try {
+    const { status, type, search, limit } = req.query;
+    const numLimit =
+      typeof limit === 'string' ? Number(limit) : undefined;
+
+    const places = await listCommunityPlaces({
+      status:
+        typeof status === 'string' && status.trim() !== ''
+          ? status.trim()
+          : undefined,
+      type:
+        typeof type === 'string' && type.trim() !== ''
+          ? type.trim()
+          : undefined,
+      search:
+        typeof search === 'string' && search.trim() !== ''
+          ? search.trim()
+          : undefined,
+      limit: Number.isNaN(numLimit!) ? undefined : numLimit,
+    });
+
+    res.json(places);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/community-places/:id
+router.get('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+    const place = await getCommunityPlaceById(id);
+    if (!place) {
+      return res.status(404).json({ error: 'Community place not found' });
+    }
+    res.json(place);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/community-places
+router.post('/', async (req, res, next) => {
+  try {
+    const body = req.body ?? {};
+    const { name } = body;
+    if (!isNonEmptyString(name)) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+
+    const payload = {
+      user_id: 1,
+      name: name.trim(),
+      type: isNonEmptyString(body.type)
+        ? (body.type.trim() as CommunityPlaceType)
+        : 'church',
+      denomination: isNonEmptyString(body.denomination)
+        ? body.denomination.trim()
+        : null,
+      style: isNonEmptyString(body.style) ? body.style.trim() : null,
+      address: isNonEmptyString(body.address) ? body.address.trim() : null,
+      suburb: isNonEmptyString(body.suburb) ? body.suburb.trim() : null,
+      website: isNonEmptyString(body.website) ? body.website.trim() : null,
+      contact_name: isNonEmptyString(body.contact_name)
+        ? body.contact_name.trim()
+        : null,
+      contact_email: isNonEmptyString(body.contact_email)
+        ? body.contact_email.trim()
+        : null,
+      contact_phone: isNonEmptyString(body.contact_phone)
+        ? body.contact_phone.trim()
+        : null,
+      status: isNonEmptyString(body.status)
+        ? (body.status.trim() as CommunityPlaceStatus)
+        : 'candidate',
+      hub_role: isNonEmptyString(body.hub_role) ? body.hub_role.trim() : null,
+      tags: isNonEmptyString(body.tags) ? body.tags.trim() : null,
+      kids_suitability_note: isNonEmptyString(body.kids_suitability_note)
+        ? body.kids_suitability_note.trim()
+        : null,
+      ms_friendly_note: isNonEmptyString(body.ms_friendly_note)
+        ? body.ms_friendly_note.trim()
+        : null,
+      overall_rating:
+        typeof body.overall_rating === 'number'
+          ? body.overall_rating
+          : body.overall_rating != null
+          ? Number(body.overall_rating)
+          : null,
+      is_current_home:
+        typeof body.is_current_home === 'boolean'
+          ? body.is_current_home
+          : body.is_current_home === 'true' || body.is_current_home === 1,
+      notes: isNonEmptyString(body.notes) ? body.notes.trim() : null,
+    };
+
+    const created = await createCommunityPlace(payload);
+    res.status(201).json(created);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/community-places/:id
+router.patch('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+
+    const body = req.body ?? {};
+    const update: any = {};
+
+    if (body.name !== undefined) update.name = String(body.name).trim();
+    if (body.type !== undefined) {
+      update.type =
+        body.type === null || body.type === ''
+          ? 'other'
+          : (String(body.type).trim() as CommunityPlaceType);
+    }
+    if (body.denomination !== undefined) {
+      update.denomination =
+        body.denomination === null || body.denomination === ''
+          ? null
+          : String(body.denomination).trim();
+    }
+    if (body.style !== undefined) {
+      update.style =
+        body.style === null || body.style === ''
+          ? null
+          : String(body.style).trim();
+    }
+    if (body.address !== undefined) {
+      update.address =
+        body.address === null || body.address === ''
+          ? null
+          : String(body.address).trim();
+    }
+    if (body.suburb !== undefined) {
+      update.suburb =
+        body.suburb === null || body.suburb === ''
+          ? null
+          : String(body.suburb).trim();
+    }
+    if (body.website !== undefined) {
+      update.website =
+        body.website === null || body.website === ''
+          ? null
+          : String(body.website).trim();
+    }
+    if (body.contact_name !== undefined) {
+      update.contact_name =
+        body.contact_name === null || body.contact_name === ''
+          ? null
+          : String(body.contact_name).trim();
+    }
+    if (body.contact_email !== undefined) {
+      update.contact_email =
+        body.contact_email === null || body.contact_email === ''
+          ? null
+          : String(body.contact_email).trim();
+    }
+    if (body.contact_phone !== undefined) {
+      update.contact_phone =
+        body.contact_phone === null || body.contact_phone === ''
+          ? null
+          : String(body.contact_phone).trim();
+    }
+
+    if (body.status !== undefined) {
+      update.status =
+        body.status === null || body.status === ''
+          ? 'candidate'
+          : (String(body.status).trim() as CommunityPlaceStatus);
+    }
+
+    if (body.hub_role !== undefined) {
+      update.hub_role =
+        body.hub_role === null || body.hub_role === ''
+          ? null
+          : String(body.hub_role).trim();
+    }
+
+    if (body.tags !== undefined) {
+      update.tags =
+        body.tags === null || body.tags === ''
+          ? null
+          : String(body.tags).trim();
+    }
+
+    if (body.kids_suitability_note !== undefined) {
+      update.kids_suitability_note =
+        body.kids_suitability_note === null || body.kids_suitability_note === ''
+          ? null
+          : String(body.kids_suitability_note).trim();
+    }
+
+    if (body.ms_friendly_note !== undefined) {
+      update.ms_friendly_note =
+        body.ms_friendly_note === null || body.ms_friendly_note === ''
+          ? null
+          : String(body.ms_friendly_note).trim();
+    }
+
+    if (body.overall_rating !== undefined) {
+      if (body.overall_rating === null || body.overall_rating === '') {
+        update.overall_rating = null;
+      } else {
+        const r = Number(body.overall_rating);
+        if (!Number.isNaN(r)) update.overall_rating = r;
+      }
+    }
+
+    if (body.is_current_home !== undefined) {
+      if (body.is_current_home === null || body.is_current_home === '') {
+        update.is_current_home = 0;
+      } else if (typeof body.is_current_home === 'boolean') {
+        update.is_current_home = body.is_current_home;
+      } else {
+        const val = String(body.is_current_home).toLowerCase();
+        update.is_current_home = val === 'true' || val === '1';
+      }
+    }
+
+    if (body.notes !== undefined) {
+      update.notes =
+        body.notes === null || body.notes === ''
+          ? null
+          : String(body.notes).trim();
+    }
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    const updated = await updateCommunityPlace(id, update);
+    if (!updated) {
+      return res.status(404).json({ error: 'Community place not found' });
+    }
+
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/community-places/:id
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+    await deleteCommunityPlace(id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+export default router;
+```
+
+### 3.2 `/api/community-visits`
+
+`server/src/routes/communityVisits.ts`:
+
+```ts
+import { Router } from 'express';
+import {
+  listCommunityVisits,
+  getCommunityVisitById,
+  createCommunityVisit,
+  updateCommunityVisit,
+  deleteCommunityVisit,
+} from '../db/queries';
+
+const router = Router();
+
+function isNonEmptyString(v: any): v is string {
+  return typeof v === 'string' && v.trim().length > 0;
+}
+
+// GET /api/community-visits?placeId=...
+router.get('/', async (req, res, next) => {
+  try {
+    const { placeId, limit } = req.query;
+    if (typeof placeId !== 'string' || placeId.trim() === '') {
+      return res.status(400).json({ error: 'placeId is required' });
+    }
+    const placeIdNum = Number(placeId);
+    if (Number.isNaN(placeIdNum)) {
+      return res.status(400).json({ error: 'placeId must be a number' });
+    }
+
+    const numLimit =
+      typeof limit === 'string' ? Number(limit) : undefined;
+
+    const visits = await listCommunityVisits({
+      placeId: placeIdNum,
+      limit: Number.isNaN(numLimit!) ? undefined : numLimit,
+    });
+
+    res.json(visits);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/community-visits/:id
+router.get('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+    const visit = await getCommunityVisitById(id);
+    if (!visit) {
+      return res.status(404).json({ error: 'Community visit not found' });
+    }
+    res.json(visit);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/community-visits
+router.post('/', async (req, res, next) => {
+  try {
+    const body = req.body ?? {};
+    const placeIdNum =
+      typeof body.place_id === 'number'
+        ? body.place_id
+        : body.place_id != null && String(body.place_id).trim() !== ''
+        ? Number(body.place_id)
+        : NaN;
+
+    if (Number.isNaN(placeIdNum)) {
+      return res.status(400).json({ error: 'place_id is required and must be a number' });
+    }
+
+    if (!isNonEmptyString(body.visit_date)) {
+      return res.status(400).json({ error: 'visit_date is required (YYYY-MM-DD)' });
+    }
+
+    const payload = {
+      user_id: 1,
+      place_id: placeIdNum,
+      visit_date: body.visit_date.trim(),
+      service_type: isNonEmptyString(body.service_type)
+        ? body.service_type.trim()
+        : null,
+      who_attended: isNonEmptyString(body.who_attended)
+        ? body.who_attended.trim()
+        : null,
+      vibe_summary: isNonEmptyString(body.vibe_summary)
+        ? body.vibe_summary.trim()
+        : null,
+      kids_experience: isNonEmptyString(body.kids_experience)
+        ? body.kids_experience.trim()
+        : null,
+      teaching_style: isNonEmptyString(body.teaching_style)
+        ? body.teaching_style.trim()
+        : null,
+      hospitality_note: isNonEmptyString(body.hospitality_note)
+        ? body.hospitality_note.trim()
+        : null,
+      rating:
+        typeof body.rating === 'number'
+          ? body.rating
+          : body.rating != null
+          ? Number(body.rating)
+          : null,
+    };
+
+    const created = await createCommunityVisit(payload);
+    res.status(201).json(created);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/community-visits/:id
+router.patch('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+
+    const body = req.body ?? {};
+    const update: any = {};
+
+    if (body.visit_date !== undefined) {
+      update.visit_date =
+        body.visit_date === null || body.visit_date === ''
+          ? null
+          : String(body.visit_date).trim();
+    }
+    if (body.service_type !== undefined) {
+      update.service_type =
+        body.service_type === null || body.service_type === ''
+          ? null
+          : String(body.service_type).trim();
+    }
+    if (body.who_attended !== undefined) {
+      update.who_attended =
+        body.who_attended === null || body.who_attended === ''
+          ? null
+          : String(body.who_attended).trim();
+    }
+    if (body.vibe_summary !== undefined) {
+      update.vibe_summary =
+        body.vibe_summary === null || body.vibe_summary === ''
+          ? null
+          : String(body.vibe_summary).trim();
+    }
+    if (body.kids_experience !== undefined) {
+      update.kids_experience =
+        body.kids_experience === null || body.kids_experience === ''
+          ? null
+          : String(body.kids_experience).trim();
+    }
+    if (body.teaching_style !== undefined) {
+      update.teaching_style =
+        body.teaching_style === null || body.teaching_style === ''
+          ? null
+          : String(body.teaching_style).trim();
+    }
+    if (body.hospitality_note !== undefined) {
+      update.hospitality_note =
+        body.hospitality_note === null || body.hospitality_note === ''
+          ? null
+          : String(body.hospitality_note).trim();
+    }
+    if (body.rating !== undefined) {
+      if (body.rating === null || body.rating === '') {
+        update.rating = null;
+      } else {
+        const r = Number(body.rating);
+        if (!Number.isNaN(r)) update.rating = r;
+      }
+    }
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    const updated = await updateCommunityVisit(id, update);
+    if (!updated) {
+      return res.status(404).json({ error: 'Community visit not found' });
+    }
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/community-visits/:id
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+    await deleteCommunityVisit(id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+export default router;
+```
+
+Mount them in `server/src/app.ts`:
+
+```ts
+import communityPlacesRouter from './routes/communityPlaces';
+import communityVisitsRouter from './routes/communityVisits';
+
+// ...
+app.use('/api/community-places', communityPlacesRouter);
+app.use('/api/community-visits', communityVisitsRouter);
+```
+
+---
+
+## 4. Frontend – Types & API helpers
+
+### 4.1 Types
+
+In `client/src/types/api.ts`, add:
+
+```ts
+export type CommunityPlaceType =
+  | 'church'
+  | 'parachurch'
+  | 'school'
+  | 'group'
+  | 'other';
+
+export type CommunityPlaceStatus =
+  | 'candidate'
+  | 'shortlisted'
+  | 'visited'
+  | 'home';
+
+export interface CommunityPlace {
+  id: number;
+  user_id: number;
+  name: string;
+  type: CommunityPlaceType;
+  denomination: string | null;
+  style: string | null;
+  address: string | null;
+  suburb: string | null;
+  website: string | null;
+  contact_name: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  status: CommunityPlaceStatus;
+  hub_role: string | null;
+  tags: string | null;
+  kids_suitability_note: string | null;
+  ms_friendly_note: string | null;
+  overall_rating: number | null;
+  is_current_home: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CommunityVisit {
+  id: number;
+  user_id: number;
+  place_id: number;
+  visit_date: string;
+  service_type: string | null;
+  who_attended: string | null;
+  vibe_summary: string | null;
+  kids_experience: string | null;
+  teaching_style: string | null;
+  hospitality_note: string | null;
+  rating: number | null;
+  created_at: string;
+  updated_at: string;
+}
+```
+
+### 4.2 API helpers
+
+Create `client/src/api/communityPlaces.ts`:
+
+```ts
+import { apiRequest } from './client';
+import type {
+  CommunityPlace,
+  CommunityPlaceStatus,
+  CommunityPlaceType,
+} from '../types/api';
+
+export interface ListCommunityPlacesParams {
+  status?: CommunityPlaceStatus | 'all';
+  type?: CommunityPlaceType | 'all';
+  search?: string;
+  limit?: number;
+}
+
+export async function fetchCommunityPlaces(
+  params: ListCommunityPlacesParams = {}
+): Promise<CommunityPlace[]> {
+  const sp = new URLSearchParams();
+  if (params.status && params.status !== 'all') sp.set('status', params.status);
+  if (params.type && params.type !== 'all') sp.set('type', params.type);
+  if (params.search) sp.set('search', params.search);
+  if (params.limit != null) sp.set('limit', String(params.limit));
+  const qs = sp.toString();
+  const path = qs ? `/api/community-places?${qs}` : '/api/community-places';
+  return apiRequest<CommunityPlace[]>(path);
+}
+
+export async function createCommunityPlace(payload: {
+  name: string;
+  type?: CommunityPlaceType;
+  denomination?: string | null;
+  style?: string | null;
+  address?: string | null;
+  suburb?: string | null;
+  website?: string | null;
+  contact_name?: string | null;
+  contact_email?: string | null;
+  contact_phone?: string | null;
+  status?: CommunityPlaceStatus;
+  hub_role?: string | null;
+  tags?: string | null;
+  kids_suitability_note?: string | null;
+  ms_friendly_note?: string | null;
+  overall_rating?: number | null;
+  is_current_home?: boolean;
+  notes?: string | null;
+}): Promise<CommunityPlace> {
+  return apiRequest<CommunityPlace>('/api/community-places', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateCommunityPlace(
+  id: number,
+  payload: Partial<{
+    name: string;
+    type: CommunityPlaceType;
+    denomination: string | null;
+    style: string | null;
+    address: string | null;
+    suburb: string | null;
+    website: string | null;
+    contact_name: string | null;
+    contact_email: string | null;
+    contact_phone: string | null;
+    status: CommunityPlaceStatus;
+    hub_role: string | null;
+    tags: string | null;
+    kids_suitability_note: string | null;
+    ms_friendly_note: string | null;
+    overall_rating: number | null;
+    is_current_home: boolean;
+    notes: string | null;
+  }>
+): Promise<CommunityPlace> {
+  return apiRequest<CommunityPlace>(`/api/community-places/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteCommunityPlace(id: number): Promise<void> {
+  return apiRequest<void>(`/api/community-places/${id}`, {
+    method: 'DELETE',
+  });
+}
+```
+
+Create `client/src/api/communityVisits.ts`:
+
+```ts
+import { apiRequest } from './client';
+import type { CommunityVisit } from '../types/api';
+
+export interface ListCommunityVisitsParams {
+  placeId: number;
+  limit?: number;
+}
+
+export async function fetchCommunityVisits(
+  params: ListCommunityVisitsParams
+): Promise<CommunityVisit[]> {
+  const sp = new URLSearchParams();
+  sp.set('placeId', String(params.placeId));
+  if (params.limit != null) sp.set('limit', String(params.limit));
+  const qs = sp.toString();
+  const path = `/api/community-visits?${qs}`;
+  return apiRequest<CommunityVisit[]>(path);
+}
+
+export async function createCommunityVisit(payload: {
+  place_id: number;
+  visit_date: string;
+  service_type?: string | null;
+  who_attended?: string | null;
+  vibe_summary?: string | null;
+  kids_experience?: string | null;
+  teaching_style?: string | null;
+  hospitality_note?: string | null;
+  rating?: number | null;
+}): Promise<CommunityVisit> {
+  return apiRequest<CommunityVisit>('/api/community-visits', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateCommunityVisit(
+  id: number,
+  payload: Partial<{
+    visit_date: string;
+    service_type: string | null;
+    who_attended: string | null;
+    vibe_summary: string | null;
+    kids_experience: string | null;
+    teaching_style: string | null;
+    hospitality_note: string | null;
+    rating: number | null;
+  }>
+): Promise<CommunityVisit> {
+  return apiRequest<CommunityVisit>(`/api/community-visits/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteCommunityVisit(id: number): Promise<void> {
+  return apiRequest<void>(`/api/community-visits/${id}`, {
+    method: 'DELETE',
+  });
+}
+```
+
+---
+
+## 5. Frontend – Community Hub page & components
+
+### 5.1 Route & nav
+
+In `client/src/App.tsx` (or wherever routes/nav are defined):
+
+* Import:
+
+  ```ts
+  import { CommunityPage } from './pages/CommunityPage';
+  ```
+
+* Add a nav link labelled **“Church & Community”** to the main navigation.
+
+* Add route:
+
+  ```tsx
+  <Route path="/community" element={<CommunityPage />} />
+  ```
+
+### 5.2 `CommunityPage`
+
+Create `client/src/pages/CommunityPage.tsx`:
+
+```tsx
+import React, { useEffect, useMemo, useState } from 'react';
+import type {
+  CommunityPlace,
+  CommunityPlaceStatus,
+  CommunityPlaceType,
+  CommunityVisit,
+} from '../types/api';
+import {
+  fetchCommunityPlaces,
+  createCommunityPlace,
+  updateCommunityPlace,
+  deleteCommunityPlace,
+} from '../api/communityPlaces';
+import {
+  fetchCommunityVisits,
+  createCommunityVisit,
+  updateCommunityVisit,
+  deleteCommunityVisit,
+} from '../api/communityVisits';
+import { CommunityPlaceList } from '../components/CommunityPlaceList';
+import { CommunityPlaceFormModal } from '../components/CommunityPlaceFormModal';
+import { CommunityVisitList } from '../components/CommunityVisitList';
+import { CommunityVisitFormModal } from '../components/CommunityVisitFormModal';
+
+export const CommunityPage: React.FC = () => {
+  const [places, setPlaces] = useState<CommunityPlace[]>([]);
+  const [placesLoading, setPlacesLoading] = useState(false);
+  const [placesError, setPlacesError] = useState<string | null>(null);
+
+  const [visits, setVisits] = useState<CommunityVisit[]>([]);
+  const [visitsLoading, setVisitsLoading] = useState(false);
+  const [visitsError, setVisitsError] = useState<string | null>(null);
+
+  const [selectedPlaceId, setSelectedPlaceId] = useState<number | null>(null);
+
+  const [statusFilter, setStatusFilter] =
+    useState<CommunityPlaceStatus | 'all'>('all');
+  const [typeFilter, setTypeFilter] =
+    useState<CommunityPlaceType | 'all'>('all');
+  const [search, setSearch] = useState('');
+
+  const [placeModalOpen, setPlaceModalOpen] = useState(false);
+  const [placeModalMode, setPlaceModalMode] =
+    useState<'create' | 'edit'>('create');
+  const [editingPlace, setEditingPlace] = useState<CommunityPlace | null>(null);
+
+  const [visitModalOpen, setVisitModalOpen] = useState(false);
+  const [visitModalMode, setVisitModalMode] =
+    useState<'create' | 'edit'>('create');
+  const [editingVisit, setEditingVisit] = useState<CommunityVisit | null>(null);
+
+  const loadPlaces = async () => {
+    try {
+      setPlacesLoading(true);
+      setPlacesError(null);
+      const data = await fetchCommunityPlaces({
+        status: statusFilter,
+        type: typeFilter,
+        search: search.trim() || undefined,
+      });
+      setPlaces(data);
+      if (data.length && selectedPlaceId == null) {
+        setSelectedPlaceId(data[0].id);
+      }
+    } catch (err) {
+      console.error(err);
+      setPlacesError('Failed to load community places');
+    } finally {
+      setPlacesLoading(false);
+    }
+  };
+
+  const loadVisits = async (placeId: number | null) => {
+    if (placeId == null) {
+      setVisits([]);
+      return;
+    }
+    try {
+      setVisitsLoading(true);
+      setVisitsError(null);
+      const data = await fetchCommunityVisits({ placeId, limit: 20 });
+      setVisits(data);
+    } catch (err) {
+      console.error(err);
+      setVisitsError('Failed to load visits');
+    } finally {
+      setVisitsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadPlaces();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, typeFilter]); // search handled via button below
+
+  useEffect(() => {
+    void loadVisits(selectedPlaceId);
+  }, [selectedPlaceId]);
+
+  const selectedPlace = useMemo(
+    () => places.find((p) => p.id === selectedPlaceId) ?? null,
+    [places, selectedPlaceId]
+  );
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    void loadPlaces();
+  };
+
+  const openCreatePlaceModal = () => {
+    setPlaceModalMode('create');
+    setEditingPlace(null);
+    setPlaceModalOpen(true);
+  };
+
+  const openEditPlaceModal = (place: CommunityPlace) => {
+    setPlaceModalMode('edit');
+    setEditingPlace(place);
+    setPlaceModalOpen(true);
+  };
+
+  const handleSubmitPlaceForm = async (data: {
+    name: string;
+    type: CommunityPlaceType;
+    denomination?: string;
+    style?: string;
+    address?: string;
+    suburb?: string;
+    website?: string;
+    status: CommunityPlaceStatus;
+    hub_role?: string;
+    tags?: string;
+    kids_suitability_note?: string;
+    ms_friendly_note?: string;
+    overall_rating?: number | null;
+    is_current_home?: boolean;
+    notes?: string;
+  }) => {
+    if (placeModalMode === 'create') {
+      await createCommunityPlace({
+        name: data.name,
+        type: data.type,
+        denomination: data.denomination || null,
+        style: data.style || null,
+        address: data.address || null,
+        suburb: data.suburb || null,
+        website: data.website || null,
+        status: data.status,
+        hub_role: data.hub_role || null,
+        tags: data.tags || null,
+        kids_suitability_note: data.kids_suitability_note || null,
+        ms_friendly_note: data.ms_friendly_note || null,
+        overall_rating: data.overall_rating ?? null,
+        is_current_home: !!data.is_current_home,
+        notes: data.notes || null,
+      });
+    } else if (placeModalMode === 'edit' && editingPlace) {
+      await updateCommunityPlace(editingPlace.id, {
+        name: data.name,
+        type: data.type,
+        denomination: data.denomination || null,
+        style: data.style || null,
+        address: data.address || null,
+        suburb: data.suburb || null,
+        website: data.website || null,
+        status: data.status,
+        hub_role: data.hub_role || null,
+        tags: data.tags || null,
+        kids_suitability_note: data.kids_suitability_note || null,
+        ms_friendly_note: data.ms_friendly_note || null,
+        overall_rating: data.overall_rating ?? null,
+        is_current_home: !!data.is_current_home,
+        notes: data.notes || null,
+      });
+    }
+    setPlaceModalOpen(false);
+    await loadPlaces();
+  };
+
+  const handleDeletePlace = async (place: CommunityPlace) => {
+    if (!window.confirm(`Delete "${place.name}" and all its visits?`)) return;
+    await deleteCommunityPlace(place.id);
+    if (selectedPlaceId === place.id) {
+      setSelectedPlaceId(null);
+    }
+    await loadPlaces();
+    await loadVisits(null);
+  };
+
+  const openCreateVisitModal = () => {
+    if (!selectedPlace) return;
+    setVisitModalMode('create');
+    setEditingVisit(null);
+    setVisitModalOpen(true);
+  };
+
+  const openEditVisitModal = (visit: CommunityVisit) => {
+    setVisitModalMode('edit');
+    setEditingVisit(visit);
+    setVisitModalOpen(true);
+  };
+
+  const handleSubmitVisitForm = async (data: {
+    visit_date: string;
+    service_type?: string;
+    who_attended?: string;
+    vibe_summary?: string;
+    kids_experience?: string;
+    teaching_style?: string;
+    hospitality_note?: string;
+    rating?: number | null;
+  }) => {
+    if (!selectedPlace) return;
+
+    if (visitModalMode === 'create') {
+      await createCommunityVisit({
+        place_id: selectedPlace.id,
+        visit_date: data.visit_date,
+        service_type: data.service_type || null,
+        who_attended: data.who_attended || null,
+        vibe_summary: data.vibe_summary || null,
+        kids_experience: data.kids_experience || null,
+        teaching_style: data.teaching_style || null,
+        hospitality_note: data.hospitality_note || null,
+        rating: data.rating ?? null,
+      });
+    } else if (visitModalMode === 'edit' && editingVisit) {
+      await updateCommunityVisit(editingVisit.id, {
+        visit_date: data.visit_date,
+        service_type: data.service_type || null,
+        who_attended: data.who_attended || null,
+        vibe_summary: data.vibe_summary || null,
+        kids_experience: data.kids_experience || null,
+        teaching_style: data.teaching_style || null,
+        hospitality_note: data.hospitality_note || null,
+        rating: data.rating ?? null,
+      });
+    }
+    setVisitModalOpen(false);
+    await loadVisits(selectedPlace.id);
+  };
+
+  const handleDeleteVisit = async (visit: CommunityVisit) => {
+    if (!window.confirm('Delete this visit log?')) return;
+    await deleteCommunityVisit(visit.id);
+    if (selectedPlace) {
+      await loadVisits(selectedPlace.id);
+    }
+  };
+
+  return (
+    <div className="community-page">
+      <h1>Church & Community</h1>
+      <p className="community-subtitle">
+        Shortlist and track potential churches and Christian communities in Dubbo.
+      </p>
+
+      <div className="community-layout">
+        <aside className="community-filters">
+          <form onSubmit={handleSearchSubmit} className="community-filters-form">
+            <label>
+              Status
+              <select
+                value={statusFilter}
+                onChange={(e) =>
+                  setStatusFilter(e.target.value as CommunityPlaceStatus | 'all')
+                }
+              >
+                <option value="all">All</option>
+                <option value="candidate">Candidate</option>
+                <option value="shortlisted">Shortlisted</option>
+                <option value="visited">Visited</option>
+                <option value="home">Home</option>
+              </select>
+            </label>
+            <label>
+              Type
+              <select
+                value={typeFilter}
+                onChange={(e) =>
+                  setTypeFilter(e.target.value as CommunityPlaceType | 'all')
+                }
+              >
+                <option value="all">All</option>
+                <option value="church">Church</option>
+                <option value="parachurch">Parachurch</option>
+                <option value="school">School</option>
+                <option value="group">Group</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label>
+              Search
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Name or denomination"
+              />
+            </label>
+            <button type="submit">Apply filters</button>
+            <button
+              type="button"
+              onClick={() => {
+                setStatusFilter('all');
+                setTypeFilter('all');
+                setSearch('');
+                void loadPlaces();
+              }}
+            >
+              Reset
+            </button>
+          </form>
+          <button type="button" onClick={openCreatePlaceModal}>
+            + Add place
+          </button>
+        </aside>
+
+        <main className="community-main">
+          {placesError && <div className="error-banner">{placesError}</div>}
+
+          <div className="community-main-layout">
+            <section className="community-places">
+              <CommunityPlaceList
+                places={places}
+                loading={placesLoading}
+                selectedPlaceId={selectedPlaceId}
+                onSelectPlace={(p) => setSelectedPlaceId(p ? p.id : null)}
+                onEditPlace={openEditPlaceModal}
+                onDeletePlace={handleDeletePlace}
+                onToggleShortlist={async (place, shortlisted) => {
+                  await updateCommunityPlace(place.id, {
+                    status: shortlisted ? 'shortlisted' : 'candidate',
+                  });
+                  await loadPlaces();
+                }}
+                onSetHome={async (place) => {
+                  await updateCommunityPlace(place.id, {
+                    is_current_home: true,
+                    status: 'home',
+                  });
+                  await loadPlaces();
+                }}
+              />
+            </section>
+
+            <section className="community-visits">
+              <header className="community-visits-header">
+                <h2>Visit history</h2>
+                {selectedPlace && (
+                  <button type="button" onClick={openCreateVisitModal}>
+                    + Add visit
+                  </button>
+                )}
+              </header>
+              {!selectedPlace && (
+                <p className="community-visits-placeholder">
+                  Select a place to see visits and notes.
+                </p>
+              )}
+              {selectedPlace && (
+                <>
+                  {visitsError && (
+                    <div className="error-banner">{visitsError}</div>
+                  )}
+                  <CommunityVisitList
+                    visits={visits}
+                    loading={visitsLoading}
+                    place={selectedPlace}
+                    onEditVisit={openEditVisitModal}
+                    onDeleteVisit={handleDeleteVisit}
+                  />
+                </>
+              )}
+            </section>
+          </div>
+        </main>
+      </div>
+
+      <CommunityPlaceFormModal
+        open={placeModalOpen}
+        mode={placeModalMode}
+        initialPlace={editingPlace}
+        onCancel={() => setPlaceModalOpen(false)}
+        onSubmit={handleSubmitPlaceForm}
+      />
+
+      <CommunityVisitFormModal
+        open={visitModalOpen}
+        mode={visitModalMode}
+        initialVisit={editingVisit}
+        place={selectedPlace}
+        onCancel={() => setVisitModalOpen(false)}
+        onSubmit={handleSubmitVisitForm}
+      />
+    </div>
+  );
+};
+```
+
+### 5.3 `CommunityPlaceList` component
+
+Create `client/src/components/CommunityPlaceList.tsx`:
+
+```tsx
+import React from 'react';
+import type {
+  CommunityPlace,
+  CommunityPlaceStatus,
+} from '../types/api';
+
+interface CommunityPlaceListProps {
+  places: CommunityPlace[];
+  loading: boolean;
+  selectedPlaceId: number | null;
+  onSelectPlace: (place: CommunityPlace | null) => void;
+  onEditPlace: (place: CommunityPlace) => void;
+  onDeletePlace: (place: CommunityPlace) => void;
+  onToggleShortlist: (place: CommunityPlace, shortlisted: boolean) => Promise<void>;
+  onSetHome: (place: CommunityPlace) => Promise<void>;
+}
+
+function statusLabel(status: CommunityPlaceStatus): string {
+  switch (status) {
+    case 'candidate':
+      return 'Candidate';
+    case 'shortlisted':
+      return 'Shortlisted';
+    case 'visited':
+      return 'Visited';
+    case 'home':
+      return 'Home';
+    default:
+      return status;
+  }
+}
+
+export const CommunityPlaceList: React.FC<CommunityPlaceListProps> = ({
+  places,
+  loading,
+  selectedPlaceId,
+  onSelectPlace,
+  onEditPlace,
+  onDeletePlace,
+  onToggleShortlist,
+  onSetHome,
+}) => {
+  if (loading) {
+    return <div>Loading places…</div>;
+  }
+
+  if (!places.length) {
+    return <div>No places yet. Add churches or communities you want to check out.</div>;
+  }
+
+  return (
+    <div className="community-place-list">
+      {places.map((place) => {
+        const selected = place.id === selectedPlaceId;
+        const shortlisted = place.status === 'shortlisted' || place.status === 'home';
+        const isHome = place.is_current_home === 1;
+
+        return (
+          <div
+            key={place.id}
+            className={
+              selected ? 'community-place-card selected' : 'community-place-card'
+            }
+            onClick={() => onSelectPlace(place)}
+          >
+            <div className="community-place-header">
+              <div className="community-place-title">
+                <span className="community-place-name">{place.name}</span>
+                {isHome && <span className="community-place-badge">Home</span>}
+              </div>
+              <div className="community-place-meta">
+                <span className="community-place-type">{place.type}</span>
+                {place.denomination && (
+                  <span className="community-place-denomination">
+                    {place.denomination}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {place.suburb && (
+              <div className="community-place-suburb">{place.suburb}</div>
+            )}
+            {place.address && (
+              <div className="community-place-address">{place.address}</div>
+            )}
+
+            <div className="community-place-status-row">
+              <span className="community-place-status">
+                {statusLabel(place.status)}
+              </span>
+              {place.overall_rating != null && (
+                <span className="community-place-rating">
+                  Rating: {place.overall_rating}/5
+                </span>
+              )}
+            </div>
+
+            {place.kids_suitability_note && (
+              <div className="community-place-note">
+                Kids: {place.kids_suitability_note}
+              </div>
+            )}
+            {place.ms_friendly_note && (
+              <div className="community-place-note">
+                MS: {place.ms_friendly_note}
+              </div>
+            )}
+
+            <div className="community-place-actions">
+              <label
+                onClick={(e) => e.stopPropagation()}
+                className="community-place-shortlist-toggle"
+              >
+                <input
+                  type="checkbox"
+                  checked={shortlisted}
+                  onChange={(e) => {
+                    void onToggleShortlist(place, e.target.checked);
+                  }}
+                />
+                Shortlist
+              </label>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void onSetHome(place);
+                }}
+              >
+                Set as home
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEditPlace(place);
+                }}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeletePlace(place);
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+```
+
+### 5.4 `CommunityPlaceFormModal`
+
+Create `client/src/components/CommunityPlaceFormModal.tsx`:
+
+```tsx
+import React, { useEffect, useState } from 'react';
+import type {
+  CommunityPlace,
+  CommunityPlaceStatus,
+  CommunityPlaceType,
+} from '../types/api';
+
+interface CommunityPlaceFormModalProps {
+  open: boolean;
+  mode: 'create' | 'edit';
+  initialPlace?: CommunityPlace | null;
+  onCancel: () => void;
+  onSubmit: (data: {
+    name: string;
+    type: CommunityPlaceType;
+    denomination?: string;
+    style?: string;
+    address?: string;
+    suburb?: string;
+    website?: string;
+    status: CommunityPlaceStatus;
+    hub_role?: string;
+    tags?: string;
+    kids_suitability_note?: string;
+    ms_friendly_note?: string;
+    overall_rating?: number | null;
+    is_current_home?: boolean;
+    notes?: string;
+  }) => void;
+}
+
+export const CommunityPlaceFormModal: React.FC<CommunityPlaceFormModalProps> = ({
+  open,
+  mode,
+  initialPlace,
+  onCancel,
+  onSubmit,
+}) => {
+  const [name, setName] = useState('');
+  const [type, setType] = useState<CommunityPlaceType>('church');
+  const [denomination, setDenomination] = useState('');
+  const [style, setStyle] = useState('');
+  const [address, setAddress] = useState('');
+  const [suburb, setSuburb] = useState('Dubbo');
+  const [website, setWebsite] = useState('');
+  const [status, setStatus] = useState<CommunityPlaceStatus>('candidate');
+  const [hubRole, setHubRole] = useState('');
+  const [tags, setTags] = useState('');
+  const [kidsNote, setKidsNote] = useState('');
+  const [msNote, setMsNote] = useState('');
+  const [rating, setRating] = useState('');
+  const [isHome, setIsHome] = useState(false);
+  const [notes, setNotes] = useState('');
+
+  useEffect(() => {
+    if (open && mode === 'edit' && initialPlace) {
+      setName(initialPlace.name);
+      setType(initialPlace.type);
+      setDenomination(initialPlace.denomination || '');
+      setStyle(initialPlace.style || '');
+      setAddress(initialPlace.address || '');
+      setSuburb(initialPlace.suburb || 'Dubbo');
+      setWebsite(initialPlace.website || '');
+      setStatus(initialPlace.status);
+      setHubRole(initialPlace.hub_role || '');
+      setTags(initialPlace.tags || '');
+      setKidsNote(initialPlace.kids_suitability_note || '');
+      setMsNote(initialPlace.ms_friendly_note || '');
+      setRating(
+        initialPlace.overall_rating != null
+          ? String(initialPlace.overall_rating)
+          : ''
+      );
+      setIsHome(initialPlace.is_current_home === 1);
+      setNotes(initialPlace.notes || '');
+    } else if (open && mode === 'create') {
+      setName('');
+      setType('church');
+      setDenomination('');
+      setStyle('');
+      setAddress('');
+      setSuburb('Dubbo');
+      setWebsite('');
+      setStatus('candidate');
+      setHubRole('');
+      setTags('');
+      setKidsNote('');
+      setMsNote('');
+      setRating('');
+      setIsHome(false);
+      setNotes('');
+    }
+  }, [open, mode, initialPlace]);
+
+  if (!open) return null;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+
+    onSubmit({
+      name: name.trim(),
+      type,
+      denomination: denomination.trim() || undefined,
+      style: style.trim() || undefined,
+      address: address.trim() || undefined,
+      suburb: suburb.trim() || undefined,
+      website: website.trim() || undefined,
+      status,
+      hub_role: hubRole.trim() || undefined,
+      tags: tags.trim() || undefined,
+      kids_suitability_note: kidsNote.trim() || undefined,
+      ms_friendly_note: msNote.trim() || undefined,
+      overall_rating: rating ? Number(rating) : null,
+      is_current_home: isHome,
+      notes: notes.trim() || undefined,
+    });
+  };
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal">
+        <h2>
+          {mode === 'create' ? 'Add Church / Community' : 'Edit Church / Community'}
+        </h2>
+        <form onSubmit={handleSubmit} className="community-place-form">
+          <label>
+            Name
+            <input
+              type="text"
+              required
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Dubbo Presbyterian"
+            />
+          </label>
+
+          <label>
+            Type
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value as CommunityPlaceType)}
+            >
+              <option value="church">Church</option>
+              <option value="parachurch">Parachurch</option>
+              <option value="school">School</option>
+              <option value="group">Group</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+
+          <label>
+            Denomination
+            <input
+              type="text"
+              value={denomination}
+              onChange={(e) => setDenomination(e.target.value)}
+              placeholder="Anglican, Baptist, etc."
+            />
+          </label>
+
+          <label>
+            Style
+            <input
+              type="text"
+              value={style}
+              onChange={(e) => setStyle(e.target.value)}
+              placeholder="Contemporary, liturgical, etc."
+            />
+          </label>
+
+          <label>
+            Address
+            <input
+              type="text"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+            />
+          </label>
+
+          <label>
+            Suburb
+            <input
+              type="text"
+              value={suburb}
+              onChange={(e) => setSuburb(e.target.value)}
+            />
+          </label>
+
+          <label>
+            Website
+            <input
+              type="url"
+              value={website}
+              onChange={(e) => setWebsite(e.target.value)}
+            />
+          </label>
+
+          <label>
+            Status
+            <select
+              value={status}
+              onChange={(e) =>
+                setStatus(e.target.value as CommunityPlaceStatus)
+              }
+            >
+              <option value="candidate">Candidate</option>
+              <option value="shortlisted">Shortlisted</option>
+              <option value="visited">Visited</option>
+              <option value="home">Home</option>
+            </select>
+          </label>
+
+          <label>
+            Hub / bridge role
+            <input
+              type="text"
+              value={hubRole}
+              onChange={(e) => setHubRole(e.target.value)}
+              placeholder="hub, bridge, etc."
+            />
+          </label>
+
+          <label>
+            Tags
+            <input
+              type="text"
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+              placeholder="comma-separated (e.g. youth, kids, missions)"
+            />
+          </label>
+
+          <label>
+            Kids suitability note
+            <textarea
+              rows={2}
+              value={kidsNote}
+              onChange={(e) => setKidsNote(e.target.value)}
+            />
+          </label>
+
+          <label>
+            MS / accessibility note
+            <textarea
+              rows={2}
+              value={msNote}
+              onChange={(e) => setMsNote(e.target.value)}
+            />
+          </label>
+
+          <label>
+            Overall rating (1–5)
+            <input
+              type="number"
+              min={1}
+              max={5}
+              value={rating}
+              onChange={(e) => setRating(e.target.value)}
+            />
+          </label>
+
+          <label className="community-place-home-toggle">
+            <input
+              type="checkbox"
+              checked={isHome}
+              onChange={(e) => setIsHome(e.target.checked)}
+            />
+            This is our current home church
+          </label>
+
+          <label>
+            Notes
+            <textarea
+              rows={3}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </label>
+
+          <div className="modal-actions">
+            <button type="button" onClick={onCancel}>
+              Cancel
+            </button>
+            <button type="submit">
+              {mode === 'create' ? 'Add place' : 'Save changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+```
+
+### 5.5 `CommunityVisitList` & `CommunityVisitFormModal`
+
+Create `client/src/components/CommunityVisitList.tsx`:
+
+```tsx
+import React from 'react';
+import type { CommunityVisit, CommunityPlace } from '../types/api';
+
+interface CommunityVisitListProps {
+  visits: CommunityVisit[];
+  loading: boolean;
+  place: CommunityPlace;
+  onEditVisit: (visit: CommunityVisit) => void;
+  onDeleteVisit: (visit: CommunityVisit) => void;
+}
+
+export const CommunityVisitList: React.FC<CommunityVisitListProps> = ({
+  visits,
+  loading,
+  place,
+  onEditVisit,
+  onDeleteVisit,
+}) => {
+  if (loading) {
+    return <div>Loading visits…</div>;
+  }
+
+  if (!visits.length) {
+    return (
+      <div>
+        No visits logged yet for <strong>{place.name}</strong>. Add your first visit above.
+      </div>
+    );
+  }
+
+  return (
+    <div className="community-visit-list">
+      {visits.map((visit) => (
+        <div key={visit.id} className="community-visit-card">
+          <div className="community-visit-header">
+            <div className="community-visit-date">
+              {visit.visit_date}
+              {visit.service_type && ` – ${visit.service_type}`}
+            </div>
+            {visit.rating != null && (
+              <div className="community-visit-rating">
+                {visit.rating}/5
+              </div>
+            )}
+          </div>
+          {visit.vibe_summary && (
+            <div className="community-visit-line">
+              <strong>Vibe:</strong> {visit.vibe_summary}
+            </div>
+          )}
+          {visit.kids_experience && (
+            <div className="community-visit-line">
+              <strong>Kids:</strong> {visit.kids_experience}
+            </div>
+          )}
+          {visit.teaching_style && (
+            <div className="community-visit-line">
+              <strong>Teaching:</strong> {visit.teaching_style}
+            </div>
+          )}
+          {visit.hospitality_note && (
+            <div className="community-visit-line">
+              <strong>Hospitality:</strong> {visit.hospitality_note}
+            </div>
+          )}
+          {visit.who_attended && (
+            <div className="community-visit-line">
+              <strong>Who:</strong> {visit.who_attended}
+            </div>
+          )}
+          <div className="community-visit-actions">
+            <button type="button" onClick={() => onEditVisit(visit)}>
+              Edit
+            </button>
+            <button type="button" onClick={() => onDeleteVisit(visit)}>
+              Delete
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+```
+
+Create `client/src/components/CommunityVisitFormModal.tsx`:
+
+```tsx
+import React, { useEffect, useState } from 'react';
+import type { CommunityVisit, CommunityPlace } from '../types/api';
+
+interface CommunityVisitFormModalProps {
+  open: boolean;
+  mode: 'create' | 'edit';
+  initialVisit?: CommunityVisit | null;
+  place: CommunityPlace | null;
+  onCancel: () => void;
+  onSubmit: (data: {
+    visit_date: string;
+    service_type?: string;
+    who_attended?: string;
+    vibe_summary?: string;
+    kids_experience?: string;
+    teaching_style?: string;
+    hospitality_note?: string;
+    rating?: number | null;
+  }) => void;
+}
+
+export const CommunityVisitFormModal: React.FC<CommunityVisitFormModalProps> = ({
+  open,
+  mode,
+  initialVisit,
+  place,
+  onCancel,
+  onSubmit,
+}) => {
+  const [visitDate, setVisitDate] = useState('');
+  const [serviceType, setServiceType] = useState('');
+  const [whoAttended, setWhoAttended] = useState('');
+  const [vibeSummary, setVibeSummary] = useState('');
+  const [kidsExperience, setKidsExperience] = useState('');
+  const [teachingStyle, setTeachingStyle] = useState('');
+  const [hospitalityNote, setHospitalityNote] = useState('');
+  const [rating, setRating] = useState('');
+
+  useEffect(() => {
+    if (open && mode === 'edit' && initialVisit) {
+      setVisitDate(initialVisit.visit_date);
+      setServiceType(initialVisit.service_type || '');
+      setWhoAttended(initialVisit.who_attended || '');
+      setVibeSummary(initialVisit.vibe_summary || '');
+      setKidsExperience(initialVisit.kids_experience || '');
+      setTeachingStyle(initialVisit.teaching_style || '');
+      setHospitalityNote(initialVisit.hospitality_note || '');
+      setRating(
+        initialVisit.rating != null ? String(initialVisit.rating) : ''
+      );
+    } else if (open && mode === 'create') {
+      const today = new Date().toISOString().slice(0, 10);
+      setVisitDate(today);
+      setServiceType('');
+      setWhoAttended('');
+      setVibeSummary('');
+      setKidsExperience('');
+      setTeachingStyle('');
+      setHospitalityNote('');
+      setRating('');
+    }
+  }, [open, mode, initialVisit]);
+
+  if (!open) return null;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!visitDate.trim()) return;
+    onSubmit({
+      visit_date: visitDate.trim(),
+      service_type: serviceType.trim() || undefined,
+      who_attended: whoAttended.trim() || undefined,
+      vibe_summary: vibeSummary.trim() || undefined,
+      kids_experience: kidsExperience.trim() || undefined,
+      teaching_style: teachingStyle.trim() || undefined,
+      hospitality_note: hospitalityNote.trim() || undefined,
+      rating: rating ? Number(rating) : null,
+    });
+  };
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal">
+        <h2>
+          {mode === 'create'
+            ? `Add visit${place ? ` – ${place.name}` : ''}`
+            : 'Edit visit'}
+        </h2>
+        <form onSubmit={handleSubmit} className="community-visit-form">
+          <label>
+            Visit date
+            <input
+              type="date"
+              value={visitDate}
+              onChange={(e) => setVisitDate(e.target.value)}
+              required
+            />
+          </label>
+
+          <label>
+            Service type
+            <input
+              type="text"
+              value={serviceType}
+              onChange={(e) => setServiceType(e.target.value)}
+              placeholder="Sunday AM, evening, youth, etc."
+            />
+          </label>
+
+          <label>
+            Who attended
+            <input
+              type="text"
+              value={whoAttended}
+              onChange={(e) => setWhoAttended(e.target.value)}
+              placeholder="Josh + Kristy + kids"
+            />
+          </label>
+
+          <label>
+            Vibe summary
+            <textarea
+              rows={2}
+              value={vibeSummary}
+              onChange={(e) => setVibeSummary(e.target.value)}
+            />
+          </label>
+
+          <label>
+            Kids experience
+            <textarea
+              rows={2}
+              value={kidsExperience}
+              onChange={(e) => setKidsExperience(e.target.value)}
+            />
+          </label>
+
+          <label>
+            Teaching style
+            <textarea
+              rows={2}
+              value={teachingStyle}
+              onChange={(e) => setTeachingStyle(e.target.value)}
+            />
+          </label>
+
+          <label>
+            Hospitality / welcome
+            <textarea
+              rows={2}
+              value={hospitalityNote}
+              onChange={(e) => setHospitalityNote(e.target.value)}
+            />
+          </label>
+
+          <label>
+            Rating (1–5)
+            <input
+              type="number"
+              min={1}
+              max={5}
+              value={rating}
+              onChange={(e) => setRating(e.target.value)}
+            />
+          </label>
+
+          <div className="modal-actions">
+            <button type="button" onClick={onCancel}>
+              Cancel
+            </button>
+            <button type="submit">
+              {mode === 'create' ? 'Add visit' : 'Save changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+```
+
+---
+
+## 6. Styling
+
+In `client/src/index.css` (or equivalent), add:
+
+```css
+.community-page {
+  padding: 1.5rem;
+}
+
+.community-subtitle {
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+  opacity: 0.8;
+}
+
+.community-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  gap: 1.5rem;
+}
+
+.community-filters {
+  border-right: 1px solid #ddd;
+  padding-right: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.community-filters-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.community-filters-form label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.85rem;
+}
+
+.community-filters-form input,
+.community-filters-form select {
+  margin-top: 0.25rem;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.9rem;
+}
+
+.community-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.community-main-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(0, 1.2fr);
+  gap: 1rem;
+}
+
+.community-places {
+  min-height: 200px;
+}
+
+.community-visits {
+  min-height: 200px;
+}
+
+.community-visits-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.community-visits-placeholder {
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+/* Place list / cards */
+
+.community-place-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.community-place-card {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  cursor: pointer;
+  background: #fff;
+}
+
+.community-place-card.selected {
+  border-color: #1976d2;
+  box-shadow: 0 0 0 1px rgba(25, 118, 210, 0.2);
+  background: #f3f7ff;
+}
+
+.community-place-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.2rem;
+}
+
+.community-place-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.community-place-name {
+  font-weight: 600;
+}
+
+.community-place-badge {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.3rem;
+  border-radius: 999px;
+  background: #1976d2;
+  color: #fff;
+}
+
+.community-place-meta {
+  display: flex;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  opacity: 0.85;
+}
+
+.community-place-suburb,
+.community-place-address {
+  font-size: 0.8rem;
+}
+
+.community-place-status-row {
+  margin-top: 0.25rem;
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.community-place-status {
+  font-weight: 500;
+}
+
+.community-place-rating {
+  opacity: 0.8;
+}
+
+.community-place-note {
+  font-size: 0.8rem;
+  margin-top: 0.15rem;
+}
+
+.community-place-actions {
+  margin-top: 0.35rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.community-place-actions button {
+  font-size: 0.8rem;
+}
+
+.community-place-shortlist-toggle {
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+/* Visits */
+
+.community-visit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.community-visit-card {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.4rem 0.5rem;
+  background: #fff;
+}
+
+.community-visit-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.community-visit-date {
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.community-visit-rating {
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
+
+.community-visit-line {
+  font-size: 0.8rem;
+}
+
+.community-visit-actions {
+  margin-top: 0.3rem;
+  display: flex;
+  gap: 0.3rem;
+}
+
+.community-visit-actions button {
+  font-size: 0.8rem;
+}
+
+/* Forms */
+
+.community-place-form label,
+.community-visit-form label {
+  display: block;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+.community-place-form input,
+.community-place-form textarea,
+.community-place-form select,
+.community-visit-form input,
+.community-visit-form textarea,
+.community-visit-form select {
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.9rem;
+}
+
+.community-place-home-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* Reuse .modal, .modal-backdrop, .modal-actions from earlier CTs */
+```
+
+---
+
+## 7. README update
+
+In `README.md`, under API docs, add:
+
+* `GET /api/community-places?status=&type=&search=&limit=`
+
+* `POST /api/community-places`
+
+* `GET /api/community-places/:id`
+
+* `PATCH /api/community-places/:id`
+
+* `DELETE /api/community-places/:id`
+
+* `GET /api/community-visits?placeId=&limit=`
+
+* `POST /api/community-visits`
+
+* `GET /api/community-visits/:id`
+
+* `PATCH /api/community-visits/:id`
+
+* `DELETE /api/community-visits/:id`
+
+Under UI Routes, add:
+
+* `/community` – Church & Community Hub (shortlist and visit tracking for Dubbo churches and Christian communities).
+
+---
+
+## 8. Acceptance Criteria for CT14
+
+CT14 is complete when:
+
+1. `npm run dev` still runs backend and frontend with no TypeScript errors.
+2. DB:
+
+   * `community_places` and `community_visits` tables exist.
+   * They can be inspected in SQLite with expected columns.
+3. Backend APIs:
+
+   * `POST /api/community-places` with a minimal payload `{ "name": "Dubbo Presbyterian", "type": "church" }` creates a place with default status `candidate`.
+   * `GET /api/community-places` returns the created place.
+   * `PATCH /api/community-places/:id` can set `status` to `shortlisted` or `home` and `is_current_home` to true, and this clears `is_current_home` from any other place.
+   * `POST /api/community-visits` with a valid `place_id` and `visit_date` creates a visit row.
+   * `GET /api/community-visits?placeId=<id>` returns visits for that place.
+4. Frontend:
+
+   * Nav has a “Church & Community” link that opens `/community`.
+   * `/community` shows filters on the left and two panels: place cards and visits.
+   * Places can be:
+
+     * Created via **Add place**.
+     * Marked as shortlisted via a checkbox.
+     * Marked as home via “Set as home”.
+     * Edited and deleted.
+   * Selecting a place loads its visit history in the right panel.
+   * Visits can be added, edited, and deleted; the list updates without a page reload.
+5. Existing pages (Dashboard, Tasks, Documents, Move Plan, Housing, Childcare, Health/NDIS, Packing, DCS, Compliance, Next Actions) still work as before.
+
+Please output all new/changed backend and frontend files in full so I can paste them into the project and immediately use the Church & Community Hub.
+
+```
+::contentReference[oaicite:0]{index=0}
+```

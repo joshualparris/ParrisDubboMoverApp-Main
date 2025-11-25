@@ -1,0 +1,6005 @@
+﻿_Prompts - CT10 to CT20
+
+
+CT10 – DCS Work Hub (Quick Links + Onboarding Tasks + Key Docs)
+
+
+You are an expert full-stack TypeScript engineer.
+
+
+The existing `pdm-parris-dubbo-mover` project already has:
+
+
+- Backend (`server/`):
+  - Node + Express + TypeScript.
+  - SQLite DB + schema from CT2 plus later prompts:
+    - `users`, `domains`, `tasks`
+    - `documents`
+    - `trips`, `trip_assignments`
+    - `properties`, `job_options`, `childcare_options`
+    - `providers`, `appointments`
+  - REST APIs for:
+    - `/api/domains`
+    - `/api/tasks`
+    - `/api/documents`
+    - `/api/trips`
+    - `/api/properties`
+    - `/api/job-options`
+    - `/api/childcare-options`
+    - `/api/providers`
+    - `/api/appointments`
+    - `/api/next-actions`
+- Frontend (`client/`):
+  - React + TypeScript + Vite.
+  - Navigation + routes:
+    - `/` (Dashboard)
+    - `/tasks`
+    - `/documents`
+    - `/move-plan`
+    - `/housing`
+    - `/kristy-work`
+    - `/childcare`
+    - `/health-ndis`
+    - `/next-actions`
+  - Domain-based tasks UI.
+  - Move plan / trips matrix.
+  - Health & NDIS, comparison dashboards, etc.
+
+
+Do **not** break any existing behaviour.
+
+
+Your job in CT10: build a **DCS Work Hub** focused on Josh’s new job at **Dubbo Christian School (DCS)**.
+
+
+This should:
+
+
+1. Provide a **DCS page** that feels like a “mini DCSCompanion”:
+   - Quick links (Intranet, Sentral, email, policies, timetables, etc).
+   - Onboarding / PD tasks (from `dcs_onboarding` domain).
+   - Relevant documents snippet (pulling any doc whose name looks DCS-related).
+
+
+2. Introduce a simple reusable backend model for “work links” that later can support other workplaces if needed.
+
+
+We will implement:
+
+
+- Backend:
+  - `work_links` table + typed DB helpers.
+  - `/api/work-links` CRUD endpoints.
+- Frontend:
+  - DCS Work Hub page at `/dcs`.
+  - Quick links section (CRUD).
+  - Onboarding tasks snippet (domain `dcs_onboarding`).
+  - DCS docs snippet (filtered view of uploaded documents).
+
+
+---
+
+
+## 1. Backend – WorkLink Entity & DB Helpers
+
+
+Work in `server/`.
+
+
+### 1.1 Add WorkLink type
+
+
+In `server/src/types/entities.ts` add:
+
+
+```ts
+export interface WorkLink {
+  id: number;
+  user_id: number;
+  context: string;        // e.g. 'dcs', later 'tresillian', etc.
+  label: string;          // e.g. "DCS Staff Portal"
+  url: string;
+  category: string | null;  // e.g. 'portal', 'policy', 'email', 'timetable', 'pd'
+  order_index: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+
+DTOs (same file or dtos.ts):
+export interface NewWorkLinkInput {
+  user_id: number;
+  context: string;
+  label: string;
+  url: string;
+  category?: string | null;
+  order_index?: number | null;
+  notes?: string | null;
+}
+
+
+export interface UpdateWorkLinkInput {
+  context?: string;
+  label?: string;
+  url?: string;
+  category?: string | null;
+  order_index?: number | null;
+  notes?: string | null;
+}
+
+
+1.2 Migration / table creation
+If you have a central place for migrations (e.g. server/src/db/migrations/*.ts or a single initDb.ts), add a migration that ensures this table exists:
+CREATE TABLE IF NOT EXISTS work_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  context TEXT NOT NULL,           -- 'dcs' etc.
+  label TEXT NOT NULL,
+  url TEXT NOT NULL,
+  category TEXT,
+  order_index INTEGER,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+
+Ensure this is applied when the server starts (consistent with the rest of your migrations).
+1.3 DB helper functions
+In server/src/db/queries.ts:
+* Import the types:
+
+import type {
+  WorkLink,
+  NewWorkLinkInput,
+  UpdateWorkLinkInput,
+} from '../types/entities';
+
+
+   * Add helper interfaces + functions:
+
+export interface ListWorkLinksParams {
+  context?: string;   // e.g. 'dcs'
+  limit?: number;
+}
+
+
+export async function listWorkLinks(params: ListWorkLinksParams = {}): Promise<WorkLink[]>;
+
+
+export async function getWorkLinkById(id: number): Promise<WorkLink | null>;
+
+
+export async function createWorkLink(input: NewWorkLinkInput): Promise<WorkLink>;
+
+
+export async function updateWorkLink(id: number, input: UpdateWorkLinkInput): Promise<WorkLink | null>;
+
+
+export async function deleteWorkLink(id: number): Promise<void>;
+
+
+Implementation details:
+      * Use getDb().
+
+For listWorkLinks:
+
+const db = getDb();
+const limit = params.limit && params.limit > 0 ? params.limit : 200;
+
+
+let sql = `
+  SELECT *
+  FROM work_links
+  WHERE user_id = 1
+`;
+const bindings: any[] = [];
+
+
+if (params.context) {
+  sql += ' AND context = ?';
+  bindings.push(params.context);
+}
+
+
+sql += `
+  ORDER BY
+    CASE WHEN order_index IS NULL THEN 999999 ELSE order_index END ASC,
+    label ASC
+  LIMIT ?
+`;
+bindings.push(limit);
+
+
+const rows = db.prepare(sql).all(...bindings) as any[];
+         *  Map rows to WorkLink objects (types match columns).
+
+         * createWorkLink:
+
+            * Set created_at and updated_at to new Date().toISOString().
+
+            * Insert row using db.prepare('INSERT INTO work_links (...) VALUES (...)').
+
+            * Retrieve row (e.g. SELECT * FROM work_links WHERE id = lastInsertRowId).
+
+               * updateWorkLink:
+
+                  * Apply only provided fields.
+
+                  * Always update updated_at.
+
+                  * Return null if no row affected / not found.
+
+                     * deleteWorkLink:
+
+                        * DELETE FROM work_links WHERE id = ?.
+
+Use user_id = 1 for now as in other helpers.
+________________
+
+
+2. Backend – /api/work-links Routes
+Create server/src/routes/workLinks.ts:
+import { Router } from 'express';
+import {
+  listWorkLinks,
+  getWorkLinkById,
+  createWorkLink,
+  updateWorkLink,
+  deleteWorkLink,
+} from '../db/queries';
+
+
+const router = Router();
+
+
+function parseLimit(queryValue: any, defaultValue = 200): number {
+  if (queryValue === undefined) return defaultValue;
+  const n = Number(queryValue);
+  return Number.isNaN(n) ? defaultValue : n;
+}
+
+
+function isNonEmptyString(value: any): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+
+// GET /api/work-links
+router.get('/', async (req, res, next) => {
+  try {
+    const { context, limit } = req.query;
+    const numLimit =
+      typeof limit === 'string' ? Number(limit) : undefined;
+
+
+    const links = await listWorkLinks({
+      context:
+        typeof context === 'string' && context.trim().length > 0
+          ? context.trim()
+          : undefined,
+      limit: Number.isNaN(numLimit!) ? undefined : numLimit,
+    });
+
+
+    res.json(links);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// GET /api/work-links/:id
+router.get('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+
+
+    const link = await getWorkLinkById(id);
+    if (!link) {
+      return res.status(404).json({ error: 'Work link not found' });
+    }
+    res.json(link);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// POST /api/work-links
+router.post('/', async (req, res, next) => {
+  try {
+    const { context, label, url, category, order_index, notes } = req.body ?? {};
+
+
+    if (!isNonEmptyString(context) || !isNonEmptyString(label) || !isNonEmptyString(url)) {
+      return res
+        .status(400)
+        .json({ error: 'context, label and url are required and must be non-empty strings' });
+    }
+
+
+    const payload = {
+      user_id: 1,
+      context: context.trim(),
+      label: label.trim(),
+      url: url.trim(),
+      category: isNonEmptyString(category) ? category.trim() : null,
+      order_index:
+        typeof order_index === 'number' || order_index === null
+          ? order_index
+          : order_index != null
+          ? Number(order_index)
+          : null,
+      notes: isNonEmptyString(notes) ? notes.trim() : null,
+    };
+
+
+    const created = await createWorkLink(payload);
+    res.status(201).json(created);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// PATCH /api/work-links/:id
+router.patch('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+
+
+    const { context, label, url, category, order_index, notes } = req.body ?? {};
+
+
+    const update: any = {};
+
+
+    if (context !== undefined) update.context = String(context).trim();
+    if (label !== undefined) update.label = String(label).trim();
+    if (url !== undefined) update.url = String(url).trim();
+    if (category !== undefined)
+      update.category =
+        category === null || category === '' ? null : String(category).trim();
+    if (order_index !== undefined) {
+      if (order_index === null || order_index === '') {
+        update.order_index = null;
+      } else {
+        const oi = Number(order_index);
+        if (!Number.isNaN(oi)) {
+          update.order_index = oi;
+        }
+      }
+    }
+    if (notes !== undefined)
+      update.notes = notes === null || notes === '' ? null : String(notes).trim();
+
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+
+    const updated = await updateWorkLink(id, update);
+    if (!updated) {
+      return res.status(404).json({ error: 'Work link not found' });
+    }
+
+
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// DELETE /api/work-links/:id
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+
+
+    await deleteWorkLink(id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+export default router;
+
+
+Mount the router in server/src/app.ts:
+import workLinksRouter from './routes/workLinks';
+
+
+// ...
+app.use('/api/work-links', workLinksRouter);
+
+
+________________
+
+
+3. Frontend – Types & API Client for Work Links
+Work in client/.
+3.1 Types
+In client/src/types/api.ts, add:
+export interface WorkLink {
+  id: number;
+  user_id: number;
+  context: string;
+  label: string;
+  url: string;
+  category: string | null;
+  order_index: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+
+(If this file already has related types, just append.)
+3.2 API helpers
+Create client/src/api/workLinks.ts:
+import { apiRequest } from './client';
+import type { WorkLink } from '../types/api';
+
+
+export interface ListWorkLinksParams {
+  context?: string;
+  limit?: number;
+}
+
+
+export async function fetchWorkLinks(
+  params: ListWorkLinksParams = {}
+): Promise<WorkLink[]> {
+  const sp = new URLSearchParams();
+  if (params.context) sp.set('context', params.context);
+  if (params.limit != null) sp.set('limit', String(params.limit));
+  const qs = sp.toString();
+  const path = qs ? `/api/work-links?${qs}` : '/api/work-links';
+  return apiRequest<WorkLink[]>(path);
+}
+
+
+export async function createWorkLink(payload: {
+  context: string;
+  label: string;
+  url: string;
+  category?: string | null;
+  order_index?: number | null;
+  notes?: string | null;
+}): Promise<WorkLink> {
+  return apiRequest<WorkLink>('/api/work-links', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+
+export async function updateWorkLink(
+  id: number,
+  payload: Partial<{
+    context: string;
+    label: string;
+    url: string;
+    category: string | null;
+    order_index: number | null;
+    notes: string | null;
+  }>
+): Promise<WorkLink> {
+  return apiRequest<WorkLink>(`/api/work-links/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+
+export async function deleteWorkLink(id: number): Promise<void> {
+  return apiRequest<void>(`/api/work-links/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+
+________________
+
+
+4. Frontend – DCS Work Hub Page
+4.1 Route & navigation
+In client/src/App.tsx:
+Import the page:
+
+import { DcsWorkPage } from './pages/DcsWorkPage';
+                           *                            * Add a nav link labelled “DCS” or “DCS Work” in your header/nav component.
+
+Add route:
+
+<Route path="/dcs" element={<DcsWorkPage />} />
+                              * 4.2 DcsWorkPage component
+Create client/src/pages/DcsWorkPage.tsx:
+import React, { useEffect, useMemo, useState } from 'react';
+import type { WorkLink, Task, Document } from '../types/api';
+import { fetchWorkLinks, createWorkLink, updateWorkLink, deleteWorkLink } from '../api/workLinks';
+import { fetchTasks, updateTask } from '../api/tasks';
+import { fetchDocuments } from '../api/documents';
+import { WorkLinksTable } from '../components/WorkLinksTable';
+import { WorkLinkFormModal } from '../components/WorkLinkFormModal';
+import { DomainTaskSnippet } from '../components/DomainTaskSnippet'; // reuse if exists
+import { DocumentsListCompact } from '../components/DocumentsListCompact'; // new small component
+
+
+export const DcsWorkPage: React.FC = () => {
+  const [links, setLinks] = useState<WorkLink[]>([]);
+  const [loadingLinks, setLoadingLinks] = useState(false);
+  const [linksError, setLinksError] = useState<string | null>(null);
+
+
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loadingTasks, setLoadingTasks] = useState(false);
+
+
+  const [docs, setDocs] = useState<Document[]>([]);
+  const [loadingDocs, setLoadingDocs] = useState(false);
+
+
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [formMode, setFormMode] = useState<'create' | 'edit'>('create');
+  const [editingLink, setEditingLink] = useState<WorkLink | null>(null);
+
+
+  const context = 'dcs';
+
+
+  const loadLinks = async () => {
+    try {
+      setLoadingLinks(true);
+      setLinksError(null);
+      const res = await fetchWorkLinks({ context });
+      setLinks(res);
+    } catch (err) {
+      console.error(err);
+      setLinksError('Failed to load DCS links');
+    } finally {
+      setLoadingLinks(false);
+    }
+  };
+
+
+  const loadTasks = async () => {
+    try {
+      setLoadingTasks(true);
+      const res = await fetchTasks({ domainSlug: 'dcs_onboarding' });
+      setTasks(res);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingTasks(false);
+    }
+  };
+
+
+  const loadDocs = async () => {
+    try {
+      setLoadingDocs(true);
+      const res = await fetchDocuments();
+      setDocs(res);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingDocs(false);
+    }
+  };
+
+
+  useEffect(() => {
+    void loadLinks();
+    void loadTasks();
+    void loadDocs();
+  }, []);
+
+
+  const dcsDocs = useMemo(
+    () =>
+      docs.filter((doc) => {
+        const name = (doc.original_name || '').toLowerCase();
+        return (
+          name.includes('dcs') ||
+          name.includes('dubbo christian school') ||
+          name.includes('dcs ') ||
+          name.includes('dubbo_christian')
+        );
+      }),
+    [docs]
+  );
+
+
+  const openCreateForm = () => {
+    setFormMode('create');
+    setEditingLink(null);
+    setIsFormOpen(true);
+  };
+
+
+  const openEditForm = (link: WorkLink) => {
+    setFormMode('edit');
+    setEditingLink(link);
+    setIsFormOpen(true);
+  };
+
+
+  const handleSubmitForm = async (data: {
+    label: string;
+    url: string;
+    category?: string;
+    order_index?: number | null;
+    notes?: string;
+  }) => {
+    if (formMode === 'create') {
+      await createWorkLink({
+        context,
+        label: data.label,
+        url: data.url,
+        category: data.category ?? null,
+        order_index: data.order_index ?? null,
+        notes: data.notes ?? null,
+      });
+    } else if (formMode === 'edit' && editingLink) {
+      await updateWorkLink(editingLink.id, {
+        label: data.label,
+        url: data.url,
+        category: data.category ?? null,
+        order_index: data.order_index ?? null,
+        notes: data.notes ?? null,
+      });
+    }
+    setIsFormOpen(false);
+    await loadLinks();
+  };
+
+
+  const handleDeleteLink = async (link: WorkLink) => {
+    if (!window.confirm(`Delete link "${link.label}"?`)) return;
+    await deleteWorkLink(link.id);
+    await loadLinks();
+  };
+
+
+  const handleToggleTaskStatus = async (task: Task) => {
+    const newStatus = task.status === 'done' ? 'pending' : 'done';
+    const updated = await updateTask(task.id, { status: newStatus });
+    setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+  };
+
+
+  return (
+    <div className="dcs-page">
+      <h1>Dubbo Christian School – Work Hub</h1>
+      <p className="dcs-subtitle">
+        Quick links, onboarding tasks, and key documents for your DCS ICT / Library role.
+      </p>
+
+
+      <div className="dcs-layout">
+        <section className="dcs-main">
+          <header className="dcs-section-header">
+            <h2>DCS Quick Links</h2>
+            <button type="button" onClick={openCreateForm}>
+              + Add Link
+            </button>
+          </header>
+
+
+          {linksError && <div className="error-banner">{linksError}</div>}
+
+
+          <WorkLinksTable
+            links={links}
+            loading={loadingLinks}
+            onEdit={openEditForm}
+            onDelete={handleDeleteLink}
+          />
+
+
+          <section className="dcs-docs-section">
+            <h2>DCS Documents</h2>
+            <p className="dcs-docs-help">
+              These are any uploaded documents whose file names look related to DCS.
+            </p>
+            <DocumentsListCompact documents={dcsDocs} loading={loadingDocs} />
+          </section>
+        </section>
+
+
+        <aside className="dcs-sidebar">
+          <h2>DCS Onboarding Tasks</h2>
+          <p className="dcs-tasks-help">
+            Tasks in the <code>dcs_onboarding</code> domain – accounts, PD, policies, etc.
+          </p>
+          <DomainTaskSnippet
+            title="DCS Onboarding"
+            tasks={tasks}
+            loading={loadingTasks}
+            onToggleStatus={handleToggleTaskStatus}
+          />
+        </aside>
+      </div>
+
+
+      <WorkLinkFormModal
+        open={isFormOpen}
+        mode={formMode}
+        initialLink={editingLink}
+        onCancel={() => setIsFormOpen(false)}
+        onSubmit={handleSubmitForm}
+      />
+    </div>
+  );
+};
+
+
+Adjust imports if your existing fetchTasks, updateTask, fetchDocuments functions live in different paths.
+________________
+
+
+5. Frontend – Reusable Components
+5.1 WorkLinksTable
+Create client/src/components/WorkLinksTable.tsx:
+import React from 'react';
+import type { WorkLink } from '../types/api';
+
+
+interface WorkLinksTableProps {
+  links: WorkLink[];
+  loading: boolean;
+  onEdit: (link: WorkLink) => void;
+  onDelete: (link: WorkLink) => void;
+}
+
+
+export const WorkLinksTable: React.FC<WorkLinksTableProps> = ({
+  links,
+  loading,
+  onEdit,
+  onDelete,
+}) => {
+  if (loading) {
+    return <div>Loading links…</div>;
+  }
+
+
+  if (!links.length) {
+    return <div>No links yet. Add your first DCS link above.</div>;
+  }
+
+
+  return (
+    <table className="work-links-table">
+      <thead>
+        <tr>
+          <th>Label</th>
+          <th>Category</th>
+          <th>URL</th>
+          <th>Notes</th>
+          <th>Order</th>
+          <th />
+        </tr>
+      </thead>
+      <tbody>
+        {links.map((link) => (
+          <tr key={link.id}>
+            <td>{link.label}</td>
+            <td>{link.category || '—'}</td>
+            <td>
+              <a href={link.url} target="_blank" rel="noreferrer">
+                {link.url}
+              </a>
+            </td>
+            <td>{link.notes || '—'}</td>
+            <td>{link.order_index ?? '—'}</td>
+            <td>
+              <button type="button" onClick={() => onEdit(link)}>
+                Edit
+              </button>
+              <button type="button" onClick={() => onDelete(link)}>
+                Delete
+              </button>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+};
+
+
+5.2 WorkLinkFormModal
+Create client/src/components/WorkLinkFormModal.tsx:
+import React, { useEffect, useState } from 'react';
+import type { WorkLink } from '../types/api';
+
+
+interface WorkLinkFormModalProps {
+  open: boolean;
+  mode: 'create' | 'edit';
+  initialLink?: WorkLink | null;
+  onCancel: () => void;
+  onSubmit: (data: {
+    label: string;
+    url: string;
+    category?: string;
+    order_index?: number | null;
+    notes?: string;
+  }) => void;
+}
+
+
+export const WorkLinkFormModal: React.FC<WorkLinkFormModalProps> = ({
+  open,
+  mode,
+  initialLink,
+  onCancel,
+  onSubmit,
+}) => {
+  const [label, setLabel] = useState('');
+  const [url, setUrl] = useState('');
+  const [category, setCategory] = useState('');
+  const [orderIndex, setOrderIndex] = useState<string>('');
+  const [notes, setNotes] = useState('');
+
+
+  useEffect(() => {
+    if (open && mode === 'edit' && initialLink) {
+      setLabel(initialLink.label);
+      setUrl(initialLink.url);
+      setCategory(initialLink.category || '');
+      setOrderIndex(
+        initialLink.order_index != null ? String(initialLink.order_index) : ''
+      );
+      setNotes(initialLink.notes || '');
+    } else if (open && mode === 'create') {
+      setLabel('');
+      setUrl('');
+      setCategory('');
+      setOrderIndex('');
+      setNotes('');
+    }
+  }, [open, mode, initialLink]);
+
+
+  if (!open) return null;
+
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!label.trim() || !url.trim()) return;
+
+
+    onSubmit({
+      label: label.trim(),
+      url: url.trim(),
+      category: category.trim() || undefined,
+      order_index: orderIndex ? Number(orderIndex) : null,
+      notes: notes.trim() || undefined,
+    });
+  };
+
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal">
+        <h2>{mode === 'create' ? 'Add DCS Link' : 'Edit DCS Link'}</h2>
+        <form onSubmit={handleSubmit} className="work-link-form">
+          <label>
+            Label
+            <input
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              required
+            />
+          </label>
+          <label>
+            URL
+            <input
+              type="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Category
+            <input
+              type="text"
+              placeholder="portal, policy, pd, email, timetable…"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+            />
+          </label>
+          <label>
+            Order
+            <input
+              type="number"
+              value={orderIndex}
+              onChange={(e) => setOrderIndex(e.target.value)}
+            />
+          </label>
+          <label>
+            Notes
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+            />
+          </label>
+          <div className="modal-actions">
+            <button type="button" onClick={onCancel}>
+              Cancel
+            </button>
+            <button type="submit">
+              {mode === 'create' ? 'Add Link' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+
+5.3 DocumentsListCompact
+Create client/src/components/DocumentsListCompact.tsx:
+import React from 'react';
+import type { Document } from '../types/api';
+
+
+interface DocumentsListCompactProps {
+  documents: Document[];
+  loading: boolean;
+}
+
+
+export const DocumentsListCompact: React.FC<DocumentsListCompactProps> = ({
+  documents,
+  loading,
+}) => {
+  if (loading) {
+    return <div>Loading documents…</div>;
+  }
+
+
+  if (!documents.length) {
+    return <div>No DCS-related documents detected yet.</div>;
+  }
+
+
+  return (
+    <ul className="docs-compact-list">
+      {documents.map((doc) => (
+        <li key={doc.id} className="docs-compact-item">
+          <div className="docs-compact-name">{doc.original_name}</div>
+          {doc.uploaded_at && (
+            <div className="docs-compact-meta">
+              Uploaded: {new Date(doc.uploaded_at).toLocaleDateString()}
+            </div>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+};
+
+
+If your Document type uses different fields (e.g. filename instead of original_name), adapt accordingly.
+5.4 DomainTaskSnippet
+If you already created DomainTaskSnippet earlier (e.g. for CT7/CT8), reuse it. If not, add:
+import React from 'react';
+import type { Task } from '../types/api';
+
+
+interface DomainTaskSnippetProps {
+  title: string;
+  tasks: Task[];
+  loading: boolean;
+  onToggleStatus: (task: Task) => void;
+}
+
+
+export const DomainTaskSnippet: React.FC<DomainTaskSnippetProps> = ({
+  title,
+  tasks,
+  loading,
+  onToggleStatus,
+}) => {
+  if (loading) {
+    return <div>Loading tasks…</div>;
+  }
+
+
+  if (!tasks.length) {
+    return <div>No tasks in this domain yet.</div>;
+  }
+
+
+  return (
+    <div className="domain-task-snippet">
+      <h3>{title}</h3>
+      <ul>
+        {tasks.map((task) => (
+          <li key={task.id}>
+            <label>
+              <input
+                type="checkbox"
+                checked={task.status === 'done'}
+                onChange={() => onToggleStatus(task)}
+              />
+              <span>{task.title}</span>
+            </label>
+            {task.due_date && (
+              <span className="domain-task-due"> (due {task.due_date})</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
+
+________________
+
+
+6. Styling
+In client/src/index.css (or relevant stylesheet), add minimal styles:
+.dcs-page {
+  padding: 1.5rem;
+}
+
+
+.dcs-subtitle {
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+  opacity: 0.8;
+}
+
+
+.dcs-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  gap: 1.5rem;
+}
+
+
+.dcs-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+
+.dcs-sidebar {
+  border-left: 1px solid #ddd;
+  padding-left: 1rem;
+}
+
+
+.dcs-tasks-help,
+.dcs-docs-help {
+  font-size: 0.85rem;
+  opacity: 0.8;
+  margin-bottom: 0.5rem;
+}
+
+
+.work-links-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+}
+
+
+.work-links-table th,
+.work-links-table td {
+  border: 1px solid #ddd;
+  padding: 0.5rem;
+  font-size: 0.9rem;
+}
+
+
+.work-links-table th {
+  background: #f7f7f7;
+}
+
+
+.docs-compact-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+
+.docs-compact-item {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #eee;
+}
+
+
+.docs-compact-name {
+  font-size: 0.9rem;
+}
+
+
+.docs-compact-meta {
+  font-size: 0.8rem;
+  opacity: 0.75;
+}
+
+
+/* Modal generic styles */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+}
+
+
+.modal {
+  background: #fff;
+  padding: 1rem 1.25rem;
+  border-radius: 6px;
+  max-width: 420px;
+  width: 100%;
+}
+
+
+.work-link-form label {
+  display: block;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+
+.work-link-form input,
+.work-link-form textarea {
+  width: 100%;
+  margin-top: 0.25rem;
+  margin-bottom: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.9rem;
+}
+
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+
+Use or adapt existing modal styles if you already have them.
+________________
+
+
+7. README Update
+In README.md:
+                              * Under API Overview, add:
+
+                                 * GET /api/work-links?context=&limit= – list work links (e.g. context dcs).
+
+                                 * POST /api/work-links – create a work link.
+
+                                 * GET /api/work-links/:id
+
+                                 * PATCH /api/work-links/:id
+
+                                 * DELETE /api/work-links/:id
+
+                                    * Under UI Routes, add:
+
+                                       * /dcs – DCS Work Hub: quick links, onboarding tasks (dcs_onboarding domain), and DCS-related documents.
+
+Optionally note that this is inspired by the original DCSCompanion app but focused on move/onboarding.
+________________
+
+
+________________
+8. Acceptance Criteria
+CT10 is complete when:
+                                          1. npm run dev still starts backend + frontend successfully.
+
+                                          2. Backend:
+
+                                             * work_links table exists (verified via DB or logs).
+
+                                             * POST /api/work-links with { context: "dcs", label: "DCS Portal", url: "https://..." } creates a row.
+
+                                             * GET /api/work-links?context=dcs returns the created row.
+
+                                             * PATCH /api/work-links/:id updates fields as expected.
+
+                                             * DELETE /api/work-links/:id removes the row and returns 204.
+
+                                                3. Frontend:
+
+                                                   * Nav has a “DCS” or “DCS Work” link leading to /dcs.
+
+                                                   * /dcs shows:
+
+                                                      * A list/table of quick links (empty state + loading state handled).
+
+                                                      * Ability to add/edit/delete links via modal.
+
+                                                      * A sidebar list of tasks in dcs_onboarding domain, with ability to toggle task status done/pending.
+
+                                                      * A compact list of DCS-related documents (based on filename heuristics).
+
+                                                         4. All new TypeScript code (backend & frontend) compiles without errors.
+
+                                                         5. Existing routes/pages (Tasks, Documents, Move Plan, comparison dashboards, Health & NDIS, Next Actions) continue to function as before.
+
+Please output all new/changed backend and frontend files in full (migration, types, DB helpers, route, API client, page, components, CSS, README section) so I can paste them into the project and immediately use the DCS Work Hub.
+________________
+
+
+CT11 – Licensing, Vehicle Rego & WWCC Compliance Hub
+
+
+You are an expert full-stack TypeScript engineer.
+
+
+The existing `pdm-parris-dubbo-mover` project already has:
+
+
+- Backend (`server/`):
+  - Node + Express + TypeScript.
+  - SQLite DB + schema from CT2 and later prompts:
+    - `users`, `domains`, `tasks`
+    - `documents`
+    - `trips`, `trip_assignments`
+    - `properties`, `job_options`, `childcare_options`
+    - `providers`, `appointments`
+    - `work_links`
+  - REST APIs for:
+    - `/api/domains`
+    - `/api/tasks`
+    - `/api/documents`
+    - `/api/trips`
+    - `/api/properties`
+    - `/api/job-options`
+    - `/api/childcare-options`
+    - `/api/providers`
+    - `/api/appointments`
+    - `/api/work-links`
+    - `/api/next-actions`
+- Frontend (`client/`):
+  - React + TypeScript + Vite.
+  - Navigation + routes:
+    - `/` (Dashboard)
+    - `/tasks`
+    - `/documents`
+    - `/move-plan`
+    - `/housing`
+    - `/kristy-work`
+    - `/childcare`
+    - `/health-ndis`
+    - `/next-actions`
+    - `/dcs`
+  - Domain-based task UI (incl. `DomainTaskSnippet`).
+  - Move plan, Health & NDIS, DCS Work Hub, etc.
+
+
+Do **not** break any existing behaviour.
+
+
+Your job in CT11: implement a **Licensing, Rego & WWCC Compliance Hub** that helps Josh and Kristy track:
+
+
+- VIC → NSW **driver licences** transfer.
+- **Vehicle registrations** and number plate swaps.
+- **NSW Working With Children Checks (WWCC)** for both.
+- Other key, date-based compliance items (e.g. NDIS plan review, Medicare address updates) as a generic pattern.
+
+
+We’ll:
+
+
+- Add a generic `compliance_items` table to the DB.
+- Expose `/api/compliance-items` CRUD endpoints.
+- Build a `/compliance` page that:
+  - Groups items by person / vehicle.
+  - Highlights overdue / expiring soon.
+  - Shows related tasks from domain `licensing_rego_wwcc` (name can be adjusted to what CT2 used).
+
+
+---
+
+
+## 1. Backend – ComplianceItem Entity & DB Helpers
+
+
+Work in `server/`.
+
+
+### 1.1 Add ComplianceItem type
+
+
+In `server/src/types/entities.ts`, add:
+
+
+```ts
+export interface ComplianceItem {
+  id: number;
+  user_id: number;
+
+
+  // Who/what this is about
+  subject_type: string;       // 'person' | 'vehicle' | 'household' | 'other'
+  subject_name: string;       // 'Josh', 'Kristy', 'Mazda 3', 'Hyundai i30', etc.
+
+
+  category: string;           // 'driver_licence', 'vehicle_rego', 'wwcc', 'ndis', 'medicare', etc.
+  jurisdiction: string | null; // 'VIC', 'NSW', 'Commonwealth', etc.
+
+
+  identifier: string | null;  // licence number, rego plate, WWCC number, etc.
+  status: string;             // 'not_started', 'in_progress', 'submitted', 'approved', 'expired', etc.
+
+
+  start_date: string | null;  // ISO date, when it was/will be valid from
+  expiry_date: string | null; // ISO date, when it expires or when a review is due
+
+
+  notes: string | null;
+
+
+  created_at: string;
+  updated_at: string;
+}
+
+
+Define DTOs (same file or dtos.ts):
+export interface NewComplianceItemInput {
+  user_id: number;
+  subject_type: string;
+  subject_name: string;
+  category: string;
+  jurisdiction?: string | null;
+  identifier?: string | null;
+  status?: string; // default 'not_started'
+  start_date?: string | null;
+  expiry_date?: string | null;
+  notes?: string | null;
+}
+
+
+export interface UpdateComplianceItemInput {
+  subject_type?: string;
+  subject_name?: string;
+  category?: string;
+  jurisdiction?: string | null;
+  identifier?: string | null;
+  status?: string;
+  start_date?: string | null;
+  expiry_date?: string | null;
+  notes?: string | null;
+}
+
+
+Adapt field names if CT2 defined a different naming convention, but keep the semantics.
+1.2 Migration / table creation
+Wherever you define migrations (e.g. central initDb or specific migration files), ensure a migration like:
+CREATE TABLE IF NOT EXISTS compliance_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+
+
+  subject_type TEXT NOT NULL,
+  subject_name TEXT NOT NULL,
+
+
+  category TEXT NOT NULL,
+  jurisdiction TEXT,
+  identifier TEXT,
+  status TEXT NOT NULL,
+
+
+  start_date TEXT,
+  expiry_date TEXT,
+
+
+  notes TEXT,
+
+
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+
+Ensure this migration is run on server startup, consistent with the rest of your DB init.
+1.3 DB helper functions
+In server/src/db/queries.ts:
+                                                            * Import the types:
+
+import type {
+  ComplianceItem,
+  NewComplianceItemInput,
+  UpdateComplianceItemInput,
+} from '../types/entities';
+
+
+                                                               * Add helper interfaces & functions:
+
+export interface ListComplianceItemsParams {
+  subjectType?: string;   // 'person', 'vehicle', etc.
+  subjectName?: string;   // 'Josh', 'Kristy', etc.
+  category?: string;      // 'driver_licence', 'vehicle_rego', 'wwcc', etc.
+  status?: string;        // 'not_started', 'in_progress', 'submitted', etc.
+  activeOnly?: boolean;   // if true, hide expired
+  limit?: number;
+}
+
+
+export async function listComplianceItems(
+  params: ListComplianceItemsParams = {}
+): Promise<ComplianceItem[]>;
+
+
+export async function getComplianceItemById(id: number): Promise<ComplianceItem | null>;
+
+
+export async function createComplianceItem(
+  input: NewComplianceItemInput
+): Promise<ComplianceItem>;
+
+
+export async function updateComplianceItem(
+  id: number,
+  input: UpdateComplianceItemInput
+): Promise<ComplianceItem | null>;
+
+
+export async function deleteComplianceItem(id: number): Promise<void>;
+
+
+Implementation details:
+                                                                  * Use getDb() and user_id = 1 for now (consistent with other queries).
+
+listComplianceItems:
+
+const db = getDb();
+const limit = params.limit && params.limit > 0 ? params.limit : 200;
+
+
+let sql = `
+  SELECT *
+  FROM compliance_items
+  WHERE user_id = 1
+`;
+const bindings: any[] = [];
+
+
+if (params.subjectType) {
+  sql += ' AND subject_type = ?';
+  bindings.push(params.subjectType);
+}
+
+
+if (params.subjectName) {
+  sql += ' AND subject_name = ?';
+  bindings.push(params.subjectName);
+}
+
+
+if (params.category) {
+  sql += ' AND category = ?';
+  bindings.push(params.category);
+}
+
+
+if (params.status) {
+  sql += ' AND status = ?';
+  bindings.push(params.status);
+}
+
+
+if (params.activeOnly) {
+  // active = no expiry OR expiry >= today
+  const today = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+  sql += ' AND (expiry_date IS NULL OR expiry_date >= ?)';
+  bindings.push(today);
+}
+
+
+sql += `
+  ORDER BY
+    subject_name ASC,
+    category ASC,
+    expiry_date IS NULL ASC,   -- items with expiry first
+    expiry_date ASC
+  LIMIT ?
+`;
+bindings.push(limit);
+
+
+const rows = db.prepare(sql).all(...bindings) as any[];
+
+
+return rows.map((row) => ({
+  id: row.id,
+  user_id: row.user_id,
+  subject_type: row.subject_type,
+  subject_name: row.subject_name,
+  category: row.category,
+  jurisdiction: row.jurisdiction,
+  identifier: row.identifier,
+  status: row.status,
+  start_date: row.start_date,
+  expiry_date: row.expiry_date,
+  notes: row.notes,
+  created_at: row.created_at,
+  updated_at: row.updated_at,
+}));
+                                                                     *                                                                      * createComplianceItem:
+
+                                                                        * Default status to 'not_started' if not provided.
+
+                                                                        * Set created_at and updated_at as new Date().toISOString().
+
+                                                                        * Insert and return the created row.
+
+                                                                           * updateComplianceItem:
+
+                                                                              * Only update provided fields.
+
+                                                                              * Always update updated_at.
+
+                                                                              * If no row found, return null.
+
+                                                                                 * deleteComplianceItem:
+
+                                                                                    * Idempotent DELETE FROM compliance_items WHERE id = ?.
+
+________________
+
+
+2. Backend – /api/compliance-items Routes
+Create server/src/routes/complianceItems.ts:
+import { Router } from 'express';
+import {
+  listComplianceItems,
+  getComplianceItemById,
+  createComplianceItem,
+  updateComplianceItem,
+  deleteComplianceItem,
+} from '../db/queries';
+
+
+const router = Router();
+
+
+function parseLimit(queryValue: any, defaultValue = 200): number {
+  if (queryValue === undefined) return defaultValue;
+  const n = Number(queryValue);
+  return Number.isNaN(n) ? defaultValue : n;
+}
+
+
+function isNonEmptyString(value: any): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+
+// GET /api/compliance-items
+router.get('/', async (req, res, next) => {
+  try {
+    const {
+      subjectType,
+      subjectName,
+      category,
+      status,
+      activeOnly,
+      limit,
+    } = req.query;
+
+
+    const numLimit = typeof limit === 'string' ? Number(limit) : undefined;
+
+
+    const items = await listComplianceItems({
+      subjectType:
+        typeof subjectType === 'string' && subjectType.trim().length > 0
+          ? subjectType.trim()
+          : undefined,
+      subjectName:
+        typeof subjectName === 'string' && subjectName.trim().length > 0
+          ? subjectName.trim()
+          : undefined,
+      category:
+        typeof category === 'string' && category.trim().length > 0
+          ? category.trim()
+          : undefined,
+      status:
+        typeof status === 'string' && status.trim().length > 0
+          ? status.trim()
+          : undefined,
+      activeOnly:
+        typeof activeOnly === 'string'
+          ? activeOnly === 'true'
+          : activeOnly === true,
+      limit: Number.isNaN(numLimit!) ? undefined : numLimit,
+    });
+
+
+    res.json(items);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// GET /api/compliance-items/:id
+router.get('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+
+
+    const item = await getComplianceItemById(id);
+    if (!item) {
+      return res.status(404).json({ error: 'Compliance item not found' });
+    }
+
+
+    res.json(item);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// POST /api/compliance-items
+router.post('/', async (req, res, next) => {
+  try {
+    const {
+      subject_type,
+      subject_name,
+      category,
+      jurisdiction,
+      identifier,
+      status,
+      start_date,
+      expiry_date,
+      notes,
+    } = req.body ?? {};
+
+
+    if (
+      !isNonEmptyString(subject_type) ||
+      !isNonEmptyString(subject_name) ||
+      !isNonEmptyString(category)
+    ) {
+      return res.status(400).json({
+        error: 'subject_type, subject_name and category are required and must be non-empty strings',
+      });
+    }
+
+
+    const payload = {
+      user_id: 1,
+      subject_type: subject_type.trim(),
+      subject_name: subject_name.trim(),
+      category: category.trim(),
+      jurisdiction: isNonEmptyString(jurisdiction) ? jurisdiction.trim() : null,
+      identifier: isNonEmptyString(identifier) ? identifier.trim() : null,
+      status: isNonEmptyString(status) ? status.trim() : 'not_started',
+      start_date: isNonEmptyString(start_date) ? start_date.trim() : null,
+      expiry_date: isNonEmptyString(expiry_date) ? expiry_date.trim() : null,
+      notes: isNonEmptyString(notes) ? notes.trim() : null,
+    };
+
+
+    const created = await createComplianceItem(payload);
+    res.status(201).json(created);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// PATCH /api/compliance-items/:id
+router.patch('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+
+
+    const {
+      subject_type,
+      subject_name,
+      category,
+      jurisdiction,
+      identifier,
+      status,
+      start_date,
+      expiry_date,
+      notes,
+    } = req.body ?? {};
+
+
+    const update: any = {};
+
+
+    if (subject_type !== undefined) update.subject_type = String(subject_type).trim();
+    if (subject_name !== undefined) update.subject_name = String(subject_name).trim();
+    if (category !== undefined) update.category = String(category).trim();
+
+
+    if (jurisdiction !== undefined) {
+      update.jurisdiction =
+        jurisdiction === null || jurisdiction === ''
+          ? null
+          : String(jurisdiction).trim();
+    }
+
+
+    if (identifier !== undefined) {
+      update.identifier =
+        identifier === null || identifier === ''
+          ? null
+          : String(identifier).trim();
+    }
+
+
+    if (status !== undefined) update.status = String(status).trim();
+
+
+    if (start_date !== undefined) {
+      update.start_date =
+        start_date === null || start_date === ''
+          ? null
+          : String(start_date).trim();
+    }
+
+
+    if (expiry_date !== undefined) {
+      update.expiry_date =
+        expiry_date === null || expiry_date === ''
+          ? null
+          : String(expiry_date).trim();
+    }
+
+
+    if (notes !== undefined) {
+      update.notes =
+        notes === null || notes === '' ? null : String(notes).trim();
+    }
+
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+
+    const updated = await updateComplianceItem(id, update);
+    if (!updated) {
+      return res.status(404).json({ error: 'Compliance item not found' });
+    }
+
+
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// DELETE /api/compliance-items/:id
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+
+
+    await deleteComplianceItem(id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+export default router;
+
+
+Mount the router in server/src/app.ts:
+import complianceItemsRouter from './routes/complianceItems';
+
+
+// ...
+app.use('/api/compliance-items', complianceItemsRouter);
+
+
+________________
+
+
+3. Frontend – Types & API Client
+Work in client/.
+3.1 Types
+In client/src/types/api.ts, add:
+export interface ComplianceItem {
+  id: number;
+  user_id: number;
+  subject_type: string;
+  subject_name: string;
+  category: string;
+  jurisdiction: string | null;
+  identifier: string | null;
+  status: string;
+  start_date: string | null;
+  expiry_date: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+
+Adjust if you already defined it.
+3.2 API helpers
+Create client/src/api/complianceItems.ts:
+import { apiRequest } from './client';
+import type { ComplianceItem } from '../types/api';
+
+
+export interface ListComplianceItemsParams {
+  subjectType?: string;
+  subjectName?: string;
+  category?: string;
+  status?: string;
+  activeOnly?: boolean;
+  limit?: number;
+}
+
+
+export async function fetchComplianceItems(
+  params: ListComplianceItemsParams = {}
+): Promise<ComplianceItem[]> {
+  const sp = new URLSearchParams();
+  if (params.subjectType) sp.set('subjectType', params.subjectType);
+  if (params.subjectName) sp.set('subjectName', params.subjectName);
+  if (params.category) sp.set('category', params.category);
+  if (params.status) sp.set('status', params.status);
+  if (params.activeOnly != null) sp.set('activeOnly', String(params.activeOnly));
+  if (params.limit != null) sp.set('limit', String(params.limit));
+  const qs = sp.toString();
+  const path = qs ? `/api/compliance-items?${qs}` : '/api/compliance-items';
+  return apiRequest<ComplianceItem[]>(path);
+}
+
+
+export interface CreateComplianceItemPayload {
+  subject_type: string;
+  subject_name: string;
+  category: string;
+  jurisdiction?: string | null;
+  identifier?: string | null;
+  status?: string;
+  start_date?: string | null;
+  expiry_date?: string | null;
+  notes?: string | null;
+}
+
+
+export async function createComplianceItem(
+  payload: CreateComplianceItemPayload
+): Promise<ComplianceItem> {
+  return apiRequest<ComplianceItem>('/api/compliance-items', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+
+export interface UpdateComplianceItemPayload {
+  subject_type?: string;
+  subject_name?: string;
+  category?: string;
+  jurisdiction?: string | null;
+  identifier?: string | null;
+  status?: string;
+  start_date?: string | null;
+  expiry_date?: string | null;
+  notes?: string | null;
+}
+
+
+export async function updateComplianceItem(
+  id: number,
+  payload: UpdateComplianceItemPayload
+): Promise<ComplianceItem> {
+  return apiRequest<ComplianceItem>(`/api/compliance-items/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+
+export async function deleteComplianceItem(id: number): Promise<void> {
+  return apiRequest<void>(`/api/compliance-items/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+
+________________
+
+
+4. Frontend – Compliance Hub Page
+We’ll add a /compliance page showing:
+                                                                                       * People & vehicles compliance overview.
+
+                                                                                       * Highlighted items that are overdue or expiring within 60 days.
+
+                                                                                       * Short tasks snippet from domain licensing_rego_wwcc (if that’s what you named it; adjust slug).
+
+4.1 Route & nav
+In client/src/App.tsx:
+Import:
+
+import { CompliancePage } from './pages/CompliancePage';
+                                                                                          *                                                                                           * Add a nav link labelled “Compliance” (or “Licences & Rego”) in your header.
+
+Add route:
+
+<Route path="/compliance" element={<CompliancePage />} />
+                                                                                             * 4.2 CompliancePage component
+Create client/src/pages/CompliancePage.tsx:
+import React, { useEffect, useMemo, useState } from 'react';
+import type { ComplianceItem, Task } from '../types/api';
+import {
+  fetchComplianceItems,
+  createComplianceItem,
+  updateComplianceItem,
+  deleteComplianceItem,
+} from '../api/complianceItems';
+import { fetchTasks, updateTask } from '../api/tasks';
+import { ComplianceTable } from '../components/ComplianceTable';
+import { ComplianceFormModal } from '../components/ComplianceFormModal';
+import { DomainTaskSnippet } from '../components/DomainTaskSnippet';
+
+
+export const CompliancePage: React.FC = () => {
+  const [items, setItems] = useState<ComplianceItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loadingTasks, setLoadingTasks] = useState(false);
+
+
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [formMode, setFormMode] = useState<'create' | 'edit'>('create');
+  const [editingItem, setEditingItem] = useState<ComplianceItem | null>(null);
+
+
+  const domainSlug = 'licensing_rego_wwcc'; // adjust if you used a different slug
+
+
+  const loadItems = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await fetchComplianceItems({ activeOnly: false });
+      setItems(res);
+    } catch (err) {
+      console.error(err);
+      setError('Failed to load compliance items');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+  const loadTasks = async () => {
+    try {
+      setLoadingTasks(true);
+      const res = await fetchTasks({ domainSlug });
+      setTasks(res);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingTasks(false);
+    }
+  };
+
+
+  useEffect(() => {
+    void loadItems();
+    void loadTasks();
+  }, []);
+
+
+  const grouped = useMemo(() => {
+    const people: Record<string, ComplianceItem[]> = {};
+    const vehicles: Record<string, ComplianceItem[]> = {};
+    const other: Record<string, ComplianceItem[]> = {};
+
+
+    for (const item of items) {
+      const key = item.subject_name || '(Unknown)';
+      if (item.subject_type === 'person') {
+        if (!people[key]) people[key] = [];
+        people[key].push(item);
+      } else if (item.subject_type === 'vehicle') {
+        if (!vehicles[key]) vehicles[key] = [];
+        vehicles[key].push(item);
+      } else {
+        if (!other[key]) other[key] = [];
+        other[key].push(item);
+      }
+    }
+
+
+    return { people, vehicles, other };
+  }, [items]);
+
+
+  const openCreateForm = () => {
+    setFormMode('create');
+    setEditingItem(null);
+    setIsFormOpen(true);
+  };
+
+
+  const openEditForm = (item: ComplianceItem) => {
+    setFormMode('edit');
+    setEditingItem(item);
+    setIsFormOpen(true);
+  };
+
+
+  const handleSubmitForm = async (data: {
+    subject_type: string;
+    subject_name: string;
+    category: string;
+    jurisdiction?: string;
+    identifier?: string;
+    status?: string;
+    start_date?: string | null;
+    expiry_date?: string | null;
+    notes?: string;
+  }) => {
+    if (formMode === 'create') {
+      await createComplianceItem({
+        subject_type: data.subject_type,
+        subject_name: data.subject_name,
+        category: data.category,
+        jurisdiction: data.jurisdiction || null,
+        identifier: data.identifier || null,
+        status: data.status || 'not_started',
+        start_date: data.start_date || null,
+        expiry_date: data.expiry_date || null,
+        notes: data.notes || null,
+      });
+    } else if (formMode === 'edit' && editingItem) {
+      await updateComplianceItem(editingItem.id, {
+        subject_type: data.subject_type,
+        subject_name: data.subject_name,
+        category: data.category,
+        jurisdiction: data.jurisdiction || null,
+        identifier: data.identifier || null,
+        status: data.status,
+        start_date: data.start_date || null,
+        expiry_date: data.expiry_date || null,
+        notes: data.notes || null,
+      });
+    }
+    setIsFormOpen(false);
+    await loadItems();
+  };
+
+
+  const handleDeleteItem = async (item: ComplianceItem) => {
+    if (!window.confirm(`Delete item "${item.category}" for ${item.subject_name}?`)) return;
+    await deleteComplianceItem(item.id);
+    await loadItems();
+  };
+
+
+  const handleToggleTaskStatus = async (task: Task) => {
+    const newStatus = task.status === 'done' ? 'pending' : 'done';
+    const updated = await updateTask(task.id, { status: newStatus });
+    setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+  };
+
+
+  return (
+    <div className="compliance-page">
+      <h1>Licensing, Rego & WWCC</h1>
+      <p className="compliance-subtitle">
+        Track VIC → NSW licence transfers, vehicle registrations, WWCC, and other key compliance dates.
+      </p>
+
+
+      <div className="compliance-layout">
+        <section className="compliance-main">
+          <header className="compliance-section-header">
+            <h2>Compliance Items</h2>
+            <button type="button" onClick={openCreateForm}>
+              + Add Item
+            </button>
+          </header>
+
+
+          {error && <div className="error-banner">{error}</div>}
+
+
+          <ComplianceTable
+            grouped={grouped}
+            loading={loading}
+            onEdit={openEditForm}
+            onDelete={handleDeleteItem}
+          />
+        </section>
+
+
+        <aside className="compliance-sidebar">
+          <h2>Related Tasks</h2>
+          <p className="compliance-tasks-help">
+            Tasks in the <code>{domainSlug}</code> domain – licences, rego, plates, WWCC, and related steps.
+          </p>
+          <DomainTaskSnippet
+            title="Licensing, Rego & WWCC"
+            tasks={tasks}
+            loading={loadingTasks}
+            onToggleStatus={handleToggleTaskStatus}
+          />
+        </aside>
+      </div>
+
+
+      <ComplianceFormModal
+        open={isFormOpen}
+        mode={formMode}
+        initialItem={editingItem}
+        onCancel={() => setIsFormOpen(false)}
+        onSubmit={handleSubmitForm}
+      />
+    </div>
+  );
+};
+
+
+________________
+
+
+5. Frontend – Compliance Components
+5.1 ComplianceTable
+Create client/src/components/ComplianceTable.tsx:
+import React from 'react';
+import type { ComplianceItem } from '../types/api';
+
+
+interface GroupedCompliance {
+  people: Record<string, ComplianceItem[]>;
+  vehicles: Record<string, ComplianceItem[]>;
+  other: Record<string, ComplianceItem[]>;
+}
+
+
+interface ComplianceTableProps {
+  grouped: GroupedCompliance;
+  loading: boolean;
+  onEdit: (item: ComplianceItem) => void;
+  onDelete: (item: ComplianceItem) => void;
+}
+
+
+function categoryLabel(category: string): string {
+  switch (category) {
+    case 'driver_licence':
+      return 'Driver Licence';
+    case 'vehicle_rego':
+      return 'Vehicle Registration';
+    case 'wwcc':
+      return 'Working With Children Check';
+    case 'ndis':
+      return 'NDIS';
+    case 'medicare':
+      return 'Medicare';
+    default:
+      return category;
+  }
+}
+
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case 'not_started':
+      return 'Not started';
+    case 'in_progress':
+      return 'In progress';
+    case 'submitted':
+      return 'Submitted';
+    case 'approved':
+      return 'Approved';
+    case 'expired':
+      return 'Expired';
+    default:
+      return status;
+  }
+}
+
+
+function isExpiringSoon(item: ComplianceItem, days = 60): boolean {
+  if (!item.expiry_date) return false;
+  const now = new Date();
+  const exp = new Date(item.expiry_date);
+  if (Number.isNaN(exp.getTime())) return false;
+  const diffMs = exp.getTime() - now.getTime();
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+  return diffDays >= 0 && diffDays <= days;
+}
+
+
+function isOverdue(item: ComplianceItem): boolean {
+  if (!item.expiry_date) return false;
+  const now = new Date();
+  const exp = new Date(item.expiry_date);
+  if (Number.isNaN(exp.getTime())) return false;
+  return exp.getTime() < now.getTime();
+}
+
+
+const Section: React.FC<{
+  title: string;
+  groups: Record<string, ComplianceItem[]>;
+  onEdit: (item: ComplianceItem) => void;
+  onDelete: (item: ComplianceItem) => void;
+}> = ({ title, groups, onEdit, onDelete }) => {
+  const subjectNames = Object.keys(groups).sort();
+  if (!subjectNames.length) return null;
+
+
+  return (
+    <div className="compliance-section-block">
+      <h3>{title}</h3>
+      {subjectNames.map((subject) => (
+        <div key={subject} className="compliance-subgroup">
+          <h4>{subject}</h4>
+          <table className="compliance-table">
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>Jurisdiction</th>
+                <th>Identifier</th>
+                <th>Status</th>
+                <th>Start</th>
+                <th>Expiry</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {groups[subject].map((item) => {
+                const overdue = isOverdue(item);
+                const soon = isExpiringSoon(item);
+                return (
+                  <tr
+                    key={item.id}
+                    className={
+                      overdue
+                        ? 'compliance-row-overdue'
+                        : soon
+                        ? 'compliance-row-soon'
+                        : ''
+                    }
+                  >
+                    <td>{categoryLabel(item.category)}</td>
+                    <td>{item.jurisdiction || '—'}</td>
+                    <td>{item.identifier || '—'}</td>
+                    <td>{statusLabel(item.status)}</td>
+                    <td>{item.start_date || '—'}</td>
+                    <td>{item.expiry_date || '—'}</td>
+                    <td>
+                      <button type="button" onClick={() => onEdit(item)}>
+                        Edit
+                      </button>
+                      <button type="button" onClick={() => onDelete(item)}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+
+export const ComplianceTable: React.FC<ComplianceTableProps> = ({
+  grouped,
+  loading,
+  onEdit,
+  onDelete,
+}) => {
+  if (loading) {
+    return <div>Loading compliance items…</div>;
+  }
+
+
+  const hasAny =
+    Object.keys(grouped.people).length ||
+    Object.keys(grouped.vehicles).length ||
+    Object.keys(grouped.other).length;
+
+
+  if (!hasAny) {
+    return <div>No compliance items yet. Add licences, rego, WWCC, etc. above.</div>;
+  }
+
+
+  return (
+    <div className="compliance-table-wrapper">
+      <Section
+        title="People"
+        groups={grouped.people}
+        onEdit={onEdit}
+        onDelete={onDelete}
+      />
+      <Section
+        title="Vehicles"
+        groups={grouped.vehicles}
+        onEdit={onEdit}
+        onDelete={onDelete}
+      />
+      <Section
+        title="Other"
+        groups={grouped.other}
+        onEdit={onEdit}
+        onDelete={onDelete}
+      />
+    </div>
+  );
+};
+
+
+5.2 ComplianceFormModal
+Create client/src/components/ComplianceFormModal.tsx:
+import React, { useEffect, useState } from 'react';
+import type { ComplianceItem } from '../types/api';
+
+
+interface ComplianceFormModalProps {
+  open: boolean;
+  mode: 'create' | 'edit';
+  initialItem?: ComplianceItem | null;
+  onCancel: () => void;
+  onSubmit: (data: {
+    subject_type: string;
+    subject_name: string;
+    category: string;
+    jurisdiction?: string;
+    identifier?: string;
+    status?: string;
+    start_date?: string | null;
+    expiry_date?: string | null;
+    notes?: string;
+  }) => void;
+}
+
+
+export const ComplianceFormModal: React.FC<ComplianceFormModalProps> = ({
+  open,
+  mode,
+  initialItem,
+  onCancel,
+  onSubmit,
+}) => {
+  const [subjectType, setSubjectType] = useState('person');
+  const [subjectName, setSubjectName] = useState('');
+  const [category, setCategory] = useState('driver_licence');
+  const [jurisdiction, setJurisdiction] = useState('');
+  const [identifier, setIdentifier] = useState('');
+  const [status, setStatus] = useState('not_started');
+  const [startDate, setStartDate] = useState('');
+  const [expiryDate, setExpiryDate] = useState('');
+  const [notes, setNotes] = useState('');
+
+
+  useEffect(() => {
+    if (open && mode === 'edit' && initialItem) {
+      setSubjectType(initialItem.subject_type || 'person');
+      setSubjectName(initialItem.subject_name || '');
+      setCategory(initialItem.category || 'driver_licence');
+      setJurisdiction(initialItem.jurisdiction || '');
+      setIdentifier(initialItem.identifier || '');
+      setStatus(initialItem.status || 'not_started');
+      setStartDate(initialItem.start_date || '');
+      setExpiryDate(initialItem.expiry_date || '');
+      setNotes(initialItem.notes || '');
+    } else if (open && mode === 'create') {
+      setSubjectType('person');
+      setSubjectName('');
+      setCategory('driver_licence');
+      setJurisdiction('NSW');
+      setIdentifier('');
+      setStatus('not_started');
+      setStartDate('');
+      setExpiryDate('');
+      setNotes('');
+    }
+  }, [open, mode, initialItem]);
+
+
+  if (!open) return null;
+
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!subjectName.trim()) return;
+    if (!category.trim()) return;
+
+
+    onSubmit({
+      subject_type: subjectType,
+      subject_name: subjectName.trim(),
+      category: category.trim(),
+      jurisdiction: jurisdiction.trim() || undefined,
+      identifier: identifier.trim() || undefined,
+      status: status.trim() || 'not_started',
+      start_date: startDate || null,
+      expiry_date: expiryDate || null,
+      notes: notes.trim() || undefined,
+    });
+  };
+
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal">
+        <h2>
+          {mode === 'create'
+            ? 'Add Compliance Item'
+            : 'Edit Compliance Item'}
+        </h2>
+        <form onSubmit={handleSubmit} className="compliance-form">
+          <label>
+            Subject type
+            <select
+              value={subjectType}
+              onChange={(e) => setSubjectType(e.target.value)}
+            >
+              <option value="person">Person</option>
+              <option value="vehicle">Vehicle</option>
+              <option value="household">Household</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+
+
+          <label>
+            Subject name
+            <input
+              type="text"
+              value={subjectName}
+              onChange={(e) => setSubjectName(e.target.value)}
+              placeholder="Josh, Kristy, Mazda 3, etc."
+              required
+            />
+          </label>
+
+
+          <label>
+            Category
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+            >
+              <option value="driver_licence">Driver licence</option>
+              <option value="vehicle_rego">Vehicle registration</option>
+              <option value="wwcc">Working With Children Check</option>
+              <option value="ndis">NDIS</option>
+              <option value="medicare">Medicare / MyGov</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+
+
+          <label>
+            Jurisdiction
+            <input
+              type="text"
+              value={jurisdiction}
+              onChange={(e) => setJurisdiction(e.target.value)}
+              placeholder="NSW, VIC, Commonwealth…"
+            />
+          </label>
+
+
+          <label>
+            Identifier
+            <input
+              type="text"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
+              placeholder="Licence number, plate, WWCC number…"
+            />
+          </label>
+
+
+          <label>
+            Status
+            <select value={status} onChange={(e) => setStatus(e.target.value)}>
+              <option value="not_started">Not started</option>
+              <option value="in_progress">In progress</option>
+              <option value="submitted">Submitted</option>
+              <option value="approved">Approved</option>
+              <option value="expired">Expired</option>
+            </select>
+          </label>
+
+
+          <label>
+            Start date
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+            />
+          </label>
+
+
+          <label>
+            Expiry date / review due
+            <input
+              type="date"
+              value={expiryDate}
+              onChange={(e) => setExpiryDate(e.target.value)}
+            />
+          </label>
+
+
+          <label>
+            Notes
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+            />
+          </label>
+
+
+          <div className="modal-actions">
+            <button type="button" onClick={onCancel}>
+              Cancel
+            </button>
+            <button type="submit">
+              {mode === 'create' ? 'Add Item' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+
+________________
+
+
+6. Styling
+In client/src/index.css (or equivalent), add:
+.compliance-page {
+  padding: 1.5rem;
+}
+
+
+.compliance-subtitle {
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+  opacity: 0.8;
+}
+
+
+.compliance-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  gap: 1.5rem;
+}
+
+
+.compliance-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+
+.compliance-sidebar {
+  border-left: 1px solid #ddd;
+  padding-left: 1rem;
+}
+
+
+.compliance-tasks-help {
+  font-size: 0.85rem;
+  opacity: 0.8;
+  margin-bottom: 0.5rem;
+}
+
+
+.compliance-table-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+
+.compliance-section-block h3 {
+  margin-bottom: 0.25rem;
+}
+
+
+.compliance-subgroup h4 {
+  margin: 0.5rem 0;
+}
+
+
+.compliance-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+
+.compliance-table th,
+.compliance-table td {
+  border: 1px solid #ddd;
+  padding: 0.4rem 0.5rem;
+}
+
+
+.compliance-table th {
+  background: #f7f7f7;
+}
+
+
+.compliance-row-overdue {
+  background-color: #ffe5e5;
+}
+
+
+.compliance-row-soon {
+  background-color: #fff7e0;
+}
+
+
+/* Reuse existing modal styles or include basic ones if not present */
+.compliance-form label {
+  display: block;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+
+.compliance-form input,
+.compliance-form select,
+.compliance-form textarea {
+  width: 100%;
+  margin-top: 0.25rem;
+  margin-bottom: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.9rem;
+}
+
+
+If you already have .modal-backdrop, .modal, .modal-actions from previous CTs, reuse them and avoid duplicating.
+________________
+
+
+7. README Update
+In the root README.md:
+                                                                                             * Under API Overview, add:
+
+                                                                                                * GET /api/compliance-items?subjectType=&subjectName=&category=&status=&activeOnly=&limit=
+
+                                                                                                * POST /api/compliance-items
+
+                                                                                                * GET /api/compliance-items/:id
+
+                                                                                                * PATCH /api/compliance-items/:id
+
+                                                                                                * DELETE /api/compliance-items/:id
+
+                                                                                                   * Under UI Routes, add:
+
+                                                                                                      * /compliance – Compliance hub for driver licences, vehicle rego, WWCC, and other date-based requirements.
+
+Mention that this page ties to tasks in the licensing_rego_wwcc (or equivalent) domain.
+________________
+
+
+________________
+8. Acceptance Criteria
+CT11 is complete when:
+                                                                                                         1. npm run dev still starts backend & frontend successfully.
+
+                                                                                                         2. Backend:
+
+                                                                                                            * compliance_items table exists in SQLite.
+
+POST /api/compliance-items with a payload like:
+
+{
+  "subject_type": "person",
+  "subject_name": "Josh",
+  "category": "driver_licence",
+  "jurisdiction": "NSW",
+  "status": "in_progress",
+  "notes": "Transfer VIC → NSW licence at Service NSW"
+}
+                                                                                                               *  creates a row and returns it.
+
+                                                                                                               * GET /api/compliance-items?subjectType=person&subjectName=Josh returns the created item.
+
+                                                                                                               * PATCH /api/compliance-items/:id updates fields such as status and expiry_date.
+
+                                                                                                               * DELETE /api/compliance-items/:id removes the row and returns 204.
+
+                                                                                                                  3. Frontend:
+
+                                                                                                                     * A “Compliance” link is present in the nav and takes you to /compliance.
+
+                                                                                                                     * /compliance shows:
+
+                                                                                                                        * Grouped lists: People, Vehicles, Other (with empty states handled).
+
+                                                                                                                        * Rows are highlighted when overdue (red-ish) or expiring within ~60 days (yellow-ish).
+
+                                                                                                                        * An “Add Item” button opens the modal; items can be added/edited/deleted.
+
+                                                                                                                        * The sidebar lists tasks from the licensing_rego_wwcc domain and allows toggling them done/pending.
+
+                                                                                                                           4. All new TypeScript code compiles cleanly with no type errors and passes any existing linting setup.
+
+                                                                                                                           5. Existing pages and APIs (Tasks, Move Plan, Housing, DCS, Health & NDIS, Next Actions, etc.) continue to work as before.
+
+Please output all new/changed backend and frontend files in full (migration snippet, types, DB helpers, routes, API clients, pages, components, CSS, README changes) so I can paste them into the project and immediately use the Compliance Hub.
+________________
+
+
+CT12 – Packing, Rooms & Move Logistics Board
+
+
+You are an expert full-stack TypeScript engineer.
+
+
+The existing `pdm-parris-dubbo-mover` project already has:
+
+
+- Backend (`server/`):
+  - Node + Express + TypeScript.
+  - SQLite DB + schema from CT2 and later prompts:
+    - `users`, `domains`, `tasks`
+    - `documents`
+    - `trips`, `trip_assignments`
+    - `properties`, `job_options`, `childcare_options`
+    - `providers`, `appointments`
+    - `work_links`
+    - `compliance_items`
+  - REST APIs for:
+    - `/api/domains`
+    - `/api/tasks`
+    - `/api/documents`
+    - `/api/trips`
+    - `/api/properties`
+    - `/api/job-options`
+    - `/api/childcare-options`
+    - `/api/providers`
+    - `/api/appointments`
+    - `/api/work-links`
+    - `/api/compliance-items`
+    - `/api/next-actions`
+- Frontend (`client/`):
+  - React + TypeScript + Vite.
+  - Navigation + routes:
+    - `/` (Dashboard)
+    - `/tasks`
+    - `/documents`
+    - `/move-plan`
+    - `/housing`
+    - `/kristy-work`
+    - `/childcare`
+    - `/health-ndis`
+    - `/next-actions`
+    - `/dcs`
+    - `/compliance`
+  - Domain-based task UIs, DCS Hub, Compliance Hub, etc.
+
+
+Do **not** break any existing behaviour.
+
+
+Your job in CT12: implement a **Packing & Room-by-Room Move Board** so Josh can track:
+
+
+- Rooms / areas at 53 Buckland St (and optionally the Dubbo rental later).
+- Boxes/tubs in each room (e.g. “K1 – Kitchen Pantry”, “MBR2 – Master Bedroom clothes”).
+- Status of each box: `not_started` → `packing` → `packed` → `loaded` → `unpacked`.
+- Fragile / priority flags.
+- A quick summary of “how many boxes left” by room and by status.
+
+
+We’ll add:
+
+
+- Backend:
+  - `packing_areas`, `packing_boxes`, `packing_items` tables.
+  - Queries and REST APIs for all three.
+- Frontend:
+  - A `/packing` page with:
+    - Overall stats (total boxes, by status).
+    - Room/area list with counts.
+    - Box list for selected room.
+    - Simple add/edit/delete for boxes.
+    - Optional inline list of items per box.
+
+
+---
+
+
+## 1. Backend – Packing Entities & DB Helpers
+
+
+Work in `server/`.
+
+
+### 1.1 Types
+
+
+In `server/src/types/entities.ts`, add:
+
+
+```ts
+export type PackingBoxStatus =
+  | 'not_started'
+  | 'packing'
+  | 'packed'
+  | 'loaded'
+  | 'unpacked';
+
+
+export interface PackingArea {
+  id: number;
+  user_id: number;
+  name: string;            // e.g. 'Kitchen', 'Master Bedroom', 'Garage'
+  location: string | null; // e.g. 'Bendigo', 'Dubbo', 'Storage'
+  notes: string | null;
+  order_index: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+
+export interface PackingBox {
+  id: number;
+  user_id: number;
+  area_id: number | null;    // FK -> packing_areas.id
+  label: string;             // e.g. 'K1', 'MBR2'
+  description: string | null;
+  status: PackingBoxStatus;
+  box_type: string | null;   // 'carton', 'tub', 'bag', etc.
+  fragile: number;           // 0 or 1
+  priority: number | null;   // 1 high, 2 medium, 3 low
+
+
+  loaded_trip_id: number | null; // FK -> trips.id if loaded on a specific trip
+  notes: string | null;
+
+
+  created_at: string;
+  updated_at: string;
+}
+
+
+export interface PackingItem {
+  id: number;
+  user_id: number;
+  box_id: number;         // FK -> packing_boxes.id
+  name: string;           // e.g. 'Coffee machine', 'Sylvie’s books'
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+
+DTOs (same file or dtos.ts):
+export interface NewPackingAreaInput {
+  user_id: number;
+  name: string;
+  location?: string | null;
+  notes?: string | null;
+  order_index?: number | null;
+}
+
+
+export interface UpdatePackingAreaInput {
+  name?: string;
+  location?: string | null;
+  notes?: string | null;
+  order_index?: number | null;
+}
+
+
+export interface NewPackingBoxInput {
+  user_id: number;
+  area_id?: number | null;
+  label: string;
+  description?: string | null;
+  status?: PackingBoxStatus;
+  box_type?: string | null;
+  fragile?: boolean | number;
+  priority?: number | null;
+  loaded_trip_id?: number | null;
+  notes?: string | null;
+}
+
+
+export interface UpdatePackingBoxInput {
+  area_id?: number | null;
+  label?: string;
+  description?: string | null;
+  status?: PackingBoxStatus;
+  box_type?: string | null;
+  fragile?: boolean | number;
+  priority?: number | null;
+  loaded_trip_id?: number | null;
+  notes?: string | null;
+}
+
+
+export interface NewPackingItemInput {
+  user_id: number;
+  box_id: number;
+  name: string;
+  notes?: string | null;
+}
+
+
+export interface UpdatePackingItemInput {
+  name?: string;
+  notes?: string | null;
+}
+
+
+1.2 Migration / table creation
+Wherever you define migrations (central initDb or migration files), add SQL like:
+CREATE TABLE IF NOT EXISTS packing_areas (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  location TEXT,
+  notes TEXT,
+  order_index INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+
+CREATE TABLE IF NOT EXISTS packing_boxes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  area_id INTEGER,
+  label TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL,
+  box_type TEXT,
+  fragile INTEGER NOT NULL DEFAULT 0,
+  priority INTEGER,
+  loaded_trip_id INTEGER,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (area_id) REFERENCES packing_areas (id),
+  FOREIGN KEY (loaded_trip_id) REFERENCES trips (id)
+);
+
+
+CREATE TABLE IF NOT EXISTS packing_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  box_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (box_id) REFERENCES packing_boxes (id)
+);
+
+
+Ensure this migration is executed on startup, consistent with your existing DB init logic.
+1.3 DB helper functions
+In server/src/db/queries.ts:
+Import types:
+import type {
+  PackingArea,
+  PackingBox,
+  PackingItem,
+  NewPackingAreaInput,
+  UpdatePackingAreaInput,
+  NewPackingBoxInput,
+  UpdatePackingBoxInput,
+  NewPackingItemInput,
+  UpdatePackingItemInput,
+} from '../types/entities';
+
+
+Add helper interfaces:
+export interface ListPackingAreasParams {
+  location?: string;
+  limit?: number;
+}
+
+
+export interface ListPackingBoxesParams {
+  areaId?: number;
+  status?: string;  // 'not_started', 'packing', etc.
+  fragileOnly?: boolean;
+  limit?: number;
+}
+
+
+export interface ListPackingItemsParams {
+  boxId?: number;
+  limit?: number;
+}
+
+
+Now implement:
+export async function listPackingAreas(
+  params: ListPackingAreasParams = {}
+): Promise<PackingArea[]> {
+  const db = getDb();
+  const limit = params.limit && params.limit > 0 ? params.limit : 200;
+
+
+  let sql = `
+    SELECT *
+    FROM packing_areas
+    WHERE user_id = 1
+  `;
+  const bindings: any[] = [];
+
+
+  if (params.location) {
+    sql += ' AND location = ?';
+    bindings.push(params.location);
+  }
+
+
+  sql += `
+    ORDER BY
+      CASE WHEN order_index IS NULL THEN 999999 ELSE order_index END ASC,
+      name ASC
+    LIMIT ?
+  `;
+  bindings.push(limit);
+
+
+  const rows = db.prepare(sql).all(...bindings) as any[];
+  return rows.map((row) => ({
+    id: row.id,
+    user_id: row.user_id,
+    name: row.name,
+    location: row.location,
+    notes: row.notes,
+    order_index: row.order_index,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+}
+
+
+export async function getPackingAreaById(id: number): Promise<PackingArea | null> {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT * FROM packing_areas WHERE id = ? AND user_id = 1`
+    )
+    .get(id) as any | undefined;
+
+
+  if (!row) return null;
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    name: row.name,
+    location: row.location,
+    notes: row.notes,
+    order_index: row.order_index,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+
+export async function createPackingArea(
+  input: NewPackingAreaInput
+): Promise<PackingArea> {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const stmt = db.prepare(`
+    INSERT INTO packing_areas
+      (user_id, name, location, notes, order_index, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  const info = stmt.run(
+    input.user_id,
+    input.name,
+    input.location ?? null,
+    input.notes ?? null,
+    input.order_index ?? null,
+    now,
+    now
+  );
+  const id = Number(info.lastInsertRowid);
+  const row = db
+    .prepare(`SELECT * FROM packing_areas WHERE id = ?`)
+    .get(id) as any;
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    name: row.name,
+    location: row.location,
+    notes: row.notes,
+    order_index: row.order_index,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+
+export async function updatePackingArea(
+  id: number,
+  input: UpdatePackingAreaInput
+): Promise<PackingArea | null> {
+  const db = getDb();
+  const existing = db
+    .prepare(`SELECT * FROM packing_areas WHERE id = ? AND user_id = 1`)
+    .get(id) as any | undefined;
+  if (!existing) return null;
+
+
+  const now = new Date().toISOString();
+
+
+  const updated = {
+    name: input.name ?? existing.name,
+    location:
+      input.location !== undefined ? input.location : existing.location,
+    notes: input.notes !== undefined ? input.notes : existing.notes,
+    order_index:
+      input.order_index !== undefined ? input.order_index : existing.order_index,
+  };
+
+
+  db.prepare(
+    `
+    UPDATE packing_areas
+    SET name = ?, location = ?, notes = ?, order_index = ?, updated_at = ?
+    WHERE id = ? AND user_id = 1
+  `
+  ).run(
+    updated.name,
+    updated.location,
+    updated.notes,
+    updated.order_index,
+    now,
+    id
+  );
+
+
+  const row = db
+    .prepare(`SELECT * FROM packing_areas WHERE id = ?`)
+    .get(id) as any;
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    name: row.name,
+    location: row.location,
+    notes: row.notes,
+    order_index: row.order_index,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+
+export async function deletePackingArea(id: number): Promise<void> {
+  const db = getDb();
+  // Optional: delete boxes/items or leave for manual cleanup.
+  db.prepare(`DELETE FROM packing_areas WHERE id = ? AND user_id = 1`).run(id);
+}
+
+
+Now boxes:
+export async function listPackingBoxes(
+  params: ListPackingBoxesParams = {}
+): Promise<PackingBox[]> {
+  const db = getDb();
+  const limit = params.limit && params.limit > 0 ? params.limit : 500;
+
+
+  let sql = `
+    SELECT *
+    FROM packing_boxes
+    WHERE user_id = 1
+  `;
+  const bindings: any[] = [];
+
+
+  if (params.areaId != null) {
+    sql += ' AND area_id = ?';
+    bindings.push(params.areaId);
+  }
+
+
+  if (params.status) {
+    sql += ' AND status = ?';
+    bindings.push(params.status);
+  }
+
+
+  if (params.fragileOnly) {
+    sql += ' AND fragile = 1';
+  }
+
+
+  sql += `
+    ORDER BY
+      area_id ASC,
+      label ASC
+    LIMIT ?
+  `;
+  bindings.push(limit);
+
+
+  const rows = db.prepare(sql).all(...bindings) as any[];
+  return rows.map((row) => ({
+    id: row.id,
+    user_id: row.user_id,
+    area_id: row.area_id,
+    label: row.label,
+    description: row.description,
+    status: row.status,
+    box_type: row.box_type,
+    fragile: row.fragile,
+    priority: row.priority,
+    loaded_trip_id: row.loaded_trip_id,
+    notes: row.notes,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+}
+
+
+export async function getPackingBoxById(id: number): Promise<PackingBox | null> {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT * FROM packing_boxes WHERE id = ? AND user_id = 1`
+    )
+    .get(id) as any | undefined;
+  if (!row) return null;
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    area_id: row.area_id,
+    label: row.label,
+    description: row.description,
+    status: row.status,
+    box_type: row.box_type,
+    fragile: row.fragile,
+    priority: row.priority,
+    loaded_trip_id: row.loaded_trip_id,
+    notes: row.notes,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+
+export async function createPackingBox(
+  input: NewPackingBoxInput
+): Promise<PackingBox> {
+  const db = getDb();
+  const now = new Date().toISOString();
+
+
+  const fragileFlag =
+    typeof input.fragile === 'boolean'
+      ? input.fragile
+        ? 1
+        : 0
+      : input.fragile
+      ? 1
+      : 0;
+
+
+  const status = input.status ?? 'not_started';
+
+
+  const stmt = db.prepare(`
+    INSERT INTO packing_boxes
+      (user_id, area_id, label, description, status, box_type, fragile,
+       priority, loaded_trip_id, notes, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+
+  const info = stmt.run(
+    input.user_id,
+    input.area_id ?? null,
+    input.label,
+    input.description ?? null,
+    status,
+    input.box_type ?? null,
+    fragileFlag,
+    input.priority ?? null,
+    input.loaded_trip_id ?? null,
+    input.notes ?? null,
+    now,
+    now
+  );
+
+
+  const id = Number(info.lastInsertRowid);
+  const row = db
+    .prepare(`SELECT * FROM packing_boxes WHERE id = ?`)
+    .get(id) as any;
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    area_id: row.area_id,
+    label: row.label,
+    description: row.description,
+    status: row.status,
+    box_type: row.box_type,
+    fragile: row.fragile,
+    priority: row.priority,
+    loaded_trip_id: row.loaded_trip_id,
+    notes: row.notes,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+
+export async function updatePackingBox(
+  id: number,
+  input: UpdatePackingBoxInput
+): Promise<PackingBox | null> {
+  const db = getDb();
+  const existing = db
+    .prepare(`SELECT * FROM packing_boxes WHERE id = ? AND user_id = 1`)
+    .get(id) as any | undefined;
+  if (!existing) return null;
+
+
+  const now = new Date().toISOString();
+
+
+  const updated = {
+    area_id:
+      input.area_id !== undefined ? input.area_id : existing.area_id,
+    label: input.label ?? existing.label,
+    description:
+      input.description !== undefined
+        ? input.description
+        : existing.description,
+    status: input.status ?? existing.status,
+    box_type:
+      input.box_type !== undefined ? input.box_type : existing.box_type,
+    fragile:
+      input.fragile !== undefined
+        ? typeof input.fragile === 'boolean'
+          ? input.fragile
+            ? 1
+            : 0
+          : input.fragile
+        : existing.fragile,
+    priority:
+      input.priority !== undefined ? input.priority : existing.priority,
+    loaded_trip_id:
+      input.loaded_trip_id !== undefined
+        ? input.loaded_trip_id
+        : existing.loaded_trip_id,
+    notes: input.notes !== undefined ? input.notes : existing.notes,
+  };
+
+
+  db.prepare(
+    `
+    UPDATE packing_boxes
+    SET area_id = ?, label = ?, description = ?, status = ?, box_type = ?,
+        fragile = ?, priority = ?, loaded_trip_id = ?, notes = ?, updated_at = ?
+    WHERE id = ? AND user_id = 1
+  `
+  ).run(
+    updated.area_id,
+    updated.label,
+    updated.description,
+    updated.status,
+    updated.box_type,
+    updated.fragile,
+    updated.priority,
+    updated.loaded_trip_id,
+    updated.notes,
+    now,
+    id
+  );
+
+
+  const row = db
+    .prepare(`SELECT * FROM packing_boxes WHERE id = ?`)
+    .get(id) as any;
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    area_id: row.area_id,
+    label: row.label,
+    description: row.description,
+    status: row.status,
+    box_type: row.box_type,
+    fragile: row.fragile,
+    priority: row.priority,
+    loaded_trip_id: row.loaded_trip_id,
+    notes: row.notes,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+
+export async function deletePackingBox(id: number): Promise<void> {
+  const db = getDb();
+  db.prepare(`DELETE FROM packing_items WHERE box_id = ? AND user_id = 1`).run(id);
+  db.prepare(`DELETE FROM packing_boxes WHERE id = ? AND user_id = 1`).run(id);
+}
+
+
+And items:
+export async function listPackingItems(
+  params: ListPackingItemsParams = {}
+): Promise<PackingItem[]> {
+  const db = getDb();
+  const limit = params.limit && params.limit > 0 ? params.limit : 500;
+
+
+  let sql = `
+    SELECT *
+    FROM packing_items
+    WHERE user_id = 1
+  `;
+  const bindings: any[] = [];
+
+
+  if (params.boxId != null) {
+    sql += ' AND box_id = ?';
+    bindings.push(params.boxId);
+  }
+
+
+  sql += `
+    ORDER BY name ASC
+    LIMIT ?
+  `;
+  bindings.push(limit);
+
+
+  const rows = db.prepare(sql).all(...bindings) as any[];
+  return rows.map((row) => ({
+    id: row.id,
+    user_id: row.user_id,
+    box_id: row.box_id,
+    name: row.name,
+    notes: row.notes,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+}
+
+
+export async function getPackingItemById(id: number): Promise<PackingItem | null> {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT * FROM packing_items WHERE id = ? AND user_id = 1`
+    )
+    .get(id) as any | undefined;
+  if (!row) return null;
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    box_id: row.box_id,
+    name: row.name,
+    notes: row.notes,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+
+export async function createPackingItem(
+  input: NewPackingItemInput
+): Promise<PackingItem> {
+  const db = getDb();
+  const now = new Date().toISOString();
+
+
+  const stmt = db.prepare(`
+    INSERT INTO packing_items
+      (user_id, box_id, name, notes, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  const info = stmt.run(
+    input.user_id,
+    input.box_id,
+    input.name,
+    input.notes ?? null,
+    now,
+    now
+  );
+  const id = Number(info.lastInsertRowid);
+  const row = db
+    .prepare(`SELECT * FROM packing_items WHERE id = ?`)
+    .get(id) as any;
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    box_id: row.box_id,
+    name: row.name,
+    notes: row.notes,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+
+export async function updatePackingItem(
+  id: number,
+  input: UpdatePackingItemInput
+): Promise<PackingItem | null> {
+  const db = getDb();
+  const existing = db
+    .prepare(`SELECT * FROM packing_items WHERE id = ? AND user_id = 1`)
+    .get(id) as any | undefined;
+  if (!existing) return null;
+
+
+  const now = new Date().toISOString();
+
+
+  const updated = {
+    name: input.name ?? existing.name,
+    notes: input.notes !== undefined ? input.notes : existing.notes,
+  };
+
+
+  db.prepare(
+    `
+    UPDATE packing_items
+    SET name = ?, notes = ?, updated_at = ?
+    WHERE id = ? AND user_id = 1
+  `
+  ).run(updated.name, updated.notes, now, id);
+
+
+  const row = db
+    .prepare(`SELECT * FROM packing_items WHERE id = ?`)
+    .get(id) as any;
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    box_id: row.box_id,
+    name: row.name,
+    notes: row.notes,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+
+export async function deletePackingItem(id: number): Promise<void> {
+  const db = getDb();
+  db.prepare(`DELETE FROM packing_items WHERE id = ? AND user_id = 1`).run(id);
+}
+
+
+________________
+
+
+2. Backend – Routes
+Create:
+                                                                                                                              * server/src/routes/packingAreas.ts
+
+                                                                                                                              * server/src/routes/packingBoxes.ts
+
+                                                                                                                              * server/src/routes/packingItems.ts
+
+Use similar patterns to previous CTs.
+2.1 /api/packing-areas
+server/src/routes/packingAreas.ts:
+import { Router } from 'express';
+import {
+  listPackingAreas,
+  getPackingAreaById,
+  createPackingArea,
+  updatePackingArea,
+  deletePackingArea,
+} from '../db/queries';
+
+
+const router = Router();
+
+
+function isNonEmptyString(value: any): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+
+// GET /api/packing-areas
+router.get('/', async (req, res, next) => {
+  try {
+    const { location, limit } = req.query;
+    const numLimit = typeof limit === 'string' ? Number(limit) : undefined;
+
+
+    const areas = await listPackingAreas({
+      location:
+        typeof location === 'string' && location.trim().length > 0
+          ? location.trim()
+          : undefined,
+      limit: Number.isNaN(numLimit!) ? undefined : numLimit,
+    });
+
+
+    res.json(areas);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// GET /api/packing-areas/:id
+router.get('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+    const area = await getPackingAreaById(id);
+    if (!area) {
+      return res.status(404).json({ error: 'Packing area not found' });
+    }
+    res.json(area);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// POST /api/packing-areas
+router.post('/', async (req, res, next) => {
+  try {
+    const { name, location, notes, order_index } = req.body ?? {};
+    if (!isNonEmptyString(name)) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+
+
+    const payload = {
+      user_id: 1,
+      name: name.trim(),
+      location: isNonEmptyString(location) ? location.trim() : null,
+      notes: isNonEmptyString(notes) ? notes.trim() : null,
+      order_index:
+        typeof order_index === 'number'
+          ? order_index
+          : order_index != null
+          ? Number(order_index)
+          : null,
+    };
+
+
+    const created = await createPackingArea(payload);
+    res.status(201).json(created);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// PATCH /api/packing-areas/:id
+router.patch('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+
+
+    const { name, location, notes, order_index } = req.body ?? {};
+    const update: any = {};
+
+
+    if (name !== undefined) update.name = String(name).trim();
+    if (location !== undefined) {
+      update.location =
+        location === null || location === ''
+          ? null
+          : String(location).trim();
+    }
+    if (notes !== undefined) {
+      update.notes =
+        notes === null || notes === '' ? null : String(notes).trim();
+    }
+    if (order_index !== undefined) {
+      if (order_index === null || order_index === '') {
+        update.order_index = null;
+      } else {
+        const oi = Number(order_index);
+        if (!Number.isNaN(oi)) update.order_index = oi;
+      }
+    }
+
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+
+    const updated = await updatePackingArea(id, update);
+    if (!updated) {
+      return res.status(404).json({ error: 'Packing area not found' });
+    }
+
+
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// DELETE /api/packing-areas/:id
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+    await deletePackingArea(id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+export default router;
+
+
+2.2 /api/packing-boxes
+server/src/routes/packingBoxes.ts:
+import { Router } from 'express';
+import {
+  listPackingBoxes,
+  getPackingBoxById,
+  createPackingBox,
+  updatePackingBox,
+  deletePackingBox,
+} from '../db/queries';
+import type { PackingBoxStatus } from '../types/entities';
+
+
+const router = Router();
+
+
+function isNonEmptyString(value: any): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+
+// GET /api/packing-boxes
+router.get('/', async (req, res, next) => {
+  try {
+    const { areaId, status, fragileOnly, limit } = req.query;
+
+
+    const areaIdNum =
+      typeof areaId === 'string' && areaId.trim() !== ''
+        ? Number(areaId)
+        : undefined;
+    const numLimit =
+      typeof limit === 'string' ? Number(limit) : undefined;
+
+
+    const boxes = await listPackingBoxes({
+      areaId: areaIdNum && !Number.isNaN(areaIdNum) ? areaIdNum : undefined,
+      status:
+        typeof status === 'string' && status.trim().length > 0
+          ? status.trim()
+          : undefined,
+      fragileOnly:
+        typeof fragileOnly === 'string'
+          ? fragileOnly === 'true'
+          : fragileOnly === true,
+      limit: Number.isNaN(numLimit!) ? undefined : numLimit,
+    });
+
+
+    res.json(boxes);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// GET /api/packing-boxes/:id
+router.get('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+    const box = await getPackingBoxById(id);
+    if (!box) {
+      return res.status(404).json({ error: 'Packing box not found' });
+    }
+    res.json(box);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// POST /api/packing-boxes
+router.post('/', async (req, res, next) => {
+  try {
+    const {
+      area_id,
+      label,
+      description,
+      status,
+      box_type,
+      fragile,
+      priority,
+      loaded_trip_id,
+      notes,
+    } = req.body ?? {};
+
+
+    if (!isNonEmptyString(label)) {
+      return res.status(400).json({ error: 'label is required' });
+    }
+
+
+    const payload = {
+      user_id: 1,
+      area_id:
+        typeof area_id === 'number'
+          ? area_id
+          : area_id != null && String(area_id).trim() !== ''
+          ? Number(area_id)
+          : null,
+      label: label.trim(),
+      description: isNonEmptyString(description) ? description.trim() : null,
+      status: isNonEmptyString(status) ? (status.trim() as PackingBoxStatus) : 'not_started',
+      box_type: isNonEmptyString(box_type) ? box_type.trim() : null,
+      fragile:
+        typeof fragile === 'boolean'
+          ? fragile
+          : fragile === 'true' || fragile === 1,
+      priority:
+        typeof priority === 'number'
+          ? priority
+          : priority != null && String(priority).trim() !== ''
+          ? Number(priority)
+          : null,
+      loaded_trip_id:
+        typeof loaded_trip_id === 'number'
+          ? loaded_trip_id
+          : loaded_trip_id != null && String(loaded_trip_id).trim() !== ''
+          ? Number(loaded_trip_id)
+          : null,
+      notes: isNonEmptyString(notes) ? notes.trim() : null,
+    };
+
+
+    const created = await createPackingBox(payload);
+    res.status(201).json(created);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// PATCH /api/packing-boxes/:id
+router.patch('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+
+
+    const {
+      area_id,
+      label,
+      description,
+      status,
+      box_type,
+      fragile,
+      priority,
+      loaded_trip_id,
+      notes,
+    } = req.body ?? {};
+
+
+    const update: any = {};
+
+
+    if (area_id !== undefined) {
+      if (area_id === null || area_id === '') {
+        update.area_id = null;
+      } else {
+        const v = Number(area_id);
+        if (!Number.isNaN(v)) update.area_id = v;
+      }
+    }
+    if (label !== undefined) update.label = String(label).trim();
+    if (description !== undefined) {
+      update.description =
+        description === null || description === ''
+          ? null
+          : String(description).trim();
+    }
+    if (status !== undefined) {
+      update.status = String(status).trim() as PackingBoxStatus;
+    }
+    if (box_type !== undefined) {
+      update.box_type =
+        box_type === null || box_type === ''
+          ? null
+          : String(box_type).trim();
+    }
+    if (fragile !== undefined) {
+      if (typeof fragile === 'boolean') {
+        update.fragile = fragile ? 1 : 0;
+      } else if (fragile === null || fragile === '') {
+        update.fragile = 0;
+      } else {
+        update.fragile =
+          fragile === 'true' || fragile === 1 || fragile === '1' ? 1 : 0;
+      }
+    }
+    if (priority !== undefined) {
+      if (priority === null || priority === '') {
+        update.priority = null;
+      } else {
+        const p = Number(priority);
+        if (!Number.isNaN(p)) update.priority = p;
+      }
+    }
+    if (loaded_trip_id !== undefined) {
+      if (loaded_trip_id === null || loaded_trip_id === '') {
+        update.loaded_trip_id = null;
+      } else {
+        const lt = Number(loaded_trip_id);
+        if (!Number.isNaN(lt)) update.loaded_trip_id = lt;
+      }
+    }
+    if (notes !== undefined) {
+      update.notes =
+        notes === null || notes === '' ? null : String(notes).trim();
+    }
+
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+
+    const updated = await updatePackingBox(id, update);
+    if (!updated) {
+      return res.status(404).json({ error: 'Packing box not found' });
+    }
+
+
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// DELETE /api/packing-boxes/:id
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+    await deletePackingBox(id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+export default router;
+
+
+2.3 /api/packing-items
+server/src/routes/packingItems.ts:
+import { Router } from 'express';
+import {
+  listPackingItems,
+  getPackingItemById,
+  createPackingItem,
+  updatePackingItem,
+  deletePackingItem,
+} from '../db/queries';
+
+
+const router = Router();
+
+
+function isNonEmptyString(value: any): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+
+// GET /api/packing-items
+router.get('/', async (req, res, next) => {
+  try {
+    const { boxId, limit } = req.query;
+    const boxIdNum =
+      typeof boxId === 'string' && boxId.trim() !== ''
+        ? Number(boxId)
+        : undefined;
+    const numLimit = typeof limit === 'string' ? Number(limit) : undefined;
+
+
+    const items = await listPackingItems({
+      boxId: boxIdNum && !Number.isNaN(boxIdNum) ? boxIdNum : undefined,
+      limit: Number.isNaN(numLimit!) ? undefined : numLimit,
+    });
+
+
+    res.json(items);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// GET /api/packing-items/:id
+router.get('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+    const item = await getPackingItemById(id);
+    if (!item) {
+      return res.status(404).json({ error: 'Packing item not found' });
+    }
+    res.json(item);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// POST /api/packing-items
+router.post('/', async (req, res, next) => {
+  try {
+    const { box_id, name, notes } = req.body ?? {};
+    const boxIdNum =
+      typeof box_id === 'number'
+        ? box_id
+        : box_id != null && String(box_id).trim() !== ''
+        ? Number(box_id)
+        : NaN;
+
+
+    if (Number.isNaN(boxIdNum)) {
+      return res.status(400).json({ error: 'box_id is required and must be a number' });
+    }
+
+
+    if (!isNonEmptyString(name)) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+
+
+    const payload = {
+      user_id: 1,
+      box_id: boxIdNum,
+      name: name.trim(),
+      notes: isNonEmptyString(notes) ? notes.trim() : null,
+    };
+
+
+    const created = await createPackingItem(payload);
+    res.status(201).json(created);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// PATCH /api/packing-items/:id
+router.patch('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+
+
+    const { name, notes } = req.body ?? {};
+    const update: any = {};
+
+
+    if (name !== undefined) update.name = String(name).trim();
+    if (notes !== undefined) {
+      update.notes =
+        notes === null || notes === '' ? null : String(notes).trim();
+    }
+
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+
+    const updated = await updatePackingItem(id, update);
+    if (!updated) {
+      return res.status(404).json({ error: 'Packing item not found' });
+    }
+
+
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// DELETE /api/packing-items/:id
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+    await deletePackingItem(id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+export default router;
+
+
+Mount routes in server/src/app.ts:
+import packingAreasRouter from './routes/packingAreas';
+import packingBoxesRouter from './routes/packingBoxes';
+import packingItemsRouter from './routes/packingItems';
+
+
+// ...
+app.use('/api/packing-areas', packingAreasRouter);
+app.use('/api/packing-boxes', packingBoxesRouter);
+app.use('/api/packing-items', packingItemsRouter);
+
+
+________________
+
+
+3. Frontend – Types & API Clients
+Work in client/.
+3.1 Types
+In client/src/types/api.ts, add:
+export type PackingBoxStatus =
+  | 'not_started'
+  | 'packing'
+  | 'packed'
+  | 'loaded'
+  | 'unpacked';
+
+
+export interface PackingArea {
+  id: number;
+  user_id: number;
+  name: string;
+  location: string | null;
+  notes: string | null;
+  order_index: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+
+export interface PackingBox {
+  id: number;
+  user_id: number;
+  area_id: number | null;
+  label: string;
+  description: string | null;
+  status: PackingBoxStatus;
+  box_type: string | null;
+  fragile: number;
+  priority: number | null;
+  loaded_trip_id: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+
+export interface PackingItem {
+  id: number;
+  user_id: number;
+  box_id: number;
+  name: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+
+3.2 API helpers
+Create:
+                                                                                                                                 * client/src/api/packingAreas.ts
+
+                                                                                                                                 * client/src/api/packingBoxes.ts
+
+                                                                                                                                 * client/src/api/packingItems.ts
+
+client/src/api/packingAreas.ts:
+import { apiRequest } from './client';
+import type { PackingArea } from '../types/api';
+
+
+export interface ListPackingAreasParams {
+  location?: string;
+  limit?: number;
+}
+
+
+export async function fetchPackingAreas(
+  params: ListPackingAreasParams = {}
+): Promise<PackingArea[]> {
+  const sp = new URLSearchParams();
+  if (params.location) sp.set('location', params.location);
+  if (params.limit != null) sp.set('limit', String(params.limit));
+  const qs = sp.toString();
+  const path = qs ? `/api/packing-areas?${qs}` : '/api/packing-areas';
+  return apiRequest<PackingArea[]>(path);
+}
+
+
+export async function createPackingArea(payload: {
+  name: string;
+  location?: string | null;
+  notes?: string | null;
+  order_index?: number | null;
+}): Promise<PackingArea> {
+  return apiRequest<PackingArea>('/api/packing-areas', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+
+export async function updatePackingArea(
+  id: number,
+  payload: Partial<{
+    name: string;
+    location: string | null;
+    notes: string | null;
+    order_index: number | null;
+  }>
+): Promise<PackingArea> {
+  return apiRequest<PackingArea>(`/api/packing-areas/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+
+export async function deletePackingArea(id: number): Promise<void> {
+  return apiRequest<void>(`/api/packing-areas/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+
+client/src/api/packingBoxes.ts:
+import { apiRequest } from './client';
+import type { PackingBox, PackingBoxStatus } from '../types/api';
+
+
+export interface ListPackingBoxesParams {
+  areaId?: number;
+  status?: PackingBoxStatus | 'all';
+  fragileOnly?: boolean;
+  limit?: number;
+}
+
+
+export async function fetchPackingBoxes(
+  params: ListPackingBoxesParams = {}
+): Promise<PackingBox[]> {
+  const sp = new URLSearchParams();
+  if (params.areaId != null) sp.set('areaId', String(params.areaId));
+  if (params.status && params.status !== 'all') sp.set('status', params.status);
+  if (params.fragileOnly != null) sp.set('fragileOnly', String(params.fragileOnly));
+  if (params.limit != null) sp.set('limit', String(params.limit));
+  const qs = sp.toString();
+  const path = qs ? `/api/packing-boxes?${qs}` : '/api/packing-boxes';
+  return apiRequest<PackingBox[]>(path);
+}
+
+
+export async function createPackingBox(payload: {
+  area_id?: number | null;
+  label: string;
+  description?: string | null;
+  status?: PackingBoxStatus;
+  box_type?: string | null;
+  fragile?: boolean;
+  priority?: number | null;
+  loaded_trip_id?: number | null;
+  notes?: string | null;
+}): Promise<PackingBox> {
+  return apiRequest<PackingBox>('/api/packing-boxes', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+
+export async function updatePackingBox(
+  id: number,
+  payload: Partial<{
+    area_id: number | null;
+    label: string;
+    description: string | null;
+    status: PackingBoxStatus;
+    box_type: string | null;
+    fragile: boolean;
+    priority: number | null;
+    loaded_trip_id: number | null;
+    notes: string | null;
+  }>
+): Promise<PackingBox> {
+  return apiRequest<PackingBox>(`/api/packing-boxes/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+
+export async function deletePackingBox(id: number): Promise<void> {
+  return apiRequest<void>(`/api/packing-boxes/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+
+client/src/api/packingItems.ts:
+import { apiRequest } from './client';
+import type { PackingItem } from '../types/api';
+
+
+export interface ListPackingItemsParams {
+  boxId?: number;
+  limit?: number;
+}
+
+
+export async function fetchPackingItems(
+  params: ListPackingItemsParams = {}
+): Promise<PackingItem[]> {
+  const sp = new URLSearchParams();
+  if (params.boxId != null) sp.set('boxId', String(params.boxId));
+  if (params.limit != null) sp.set('limit', String(params.limit));
+  const qs = sp.toString();
+  const path = qs ? `/api/packing-items?${qs}` : '/api/packing-items';
+  return apiRequest<PackingItem[]>(path);
+}
+
+
+export async function createPackingItem(payload: {
+  box_id: number;
+  name: string;
+  notes?: string | null;
+}): Promise<PackingItem> {
+  return apiRequest<PackingItem>('/api/packing-items', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+
+export async function updatePackingItem(
+  id: number,
+  payload: Partial<{
+    name: string;
+    notes: string | null;
+  }>
+): Promise<PackingItem> {
+  return apiRequest<PackingItem>(`/api/packing-items/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+
+export async function deletePackingItem(id: number): Promise<void> {
+  return apiRequest<void>(`/api/packing-items/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+
+________________
+
+
+4. Frontend – Packing Page & Components
+4.1 Route & navigation
+In client/src/App.tsx:
+Import:
+
+import { PackingPage } from './pages/PackingPage';
+                                                                                                                                    *                                                                                                                                     * Add a nav link labelled “Packing” or “Packing & Boxes” in your main nav.
+
+Add route:
+
+<Route path="/packing" element={<PackingPage />} />
+                                                                                                                                       * 4.2 PackingPage component
+Create client/src/pages/PackingPage.tsx:
+import React, { useEffect, useMemo, useState } from 'react';
+import type { PackingArea, PackingBox } from '../types/api';
+import {
+  fetchPackingAreas,
+  createPackingArea,
+  updatePackingArea,
+  deletePackingArea,
+} from '../api/packingAreas';
+import {
+  fetchPackingBoxes,
+  createPackingBox,
+  updatePackingBox,
+  deletePackingBox,
+} from '../api/packingBoxes';
+import { PackingAreasSidebar } from '../components/PackingAreasSidebar';
+import { PackingBoxesList } from '../components/PackingBoxesList';
+import { PackingAreaFormModal } from '../components/PackingAreaFormModal';
+import { PackingBoxFormModal } from '../components/PackingBoxFormModal';
+
+
+export const PackingPage: React.FC = () => {
+  const [areas, setAreas] = useState<PackingArea[]>([]);
+  const [boxes, setBoxes] = useState<PackingBox[]>([]);
+  const [selectedAreaId, setSelectedAreaId] = useState<number | null>(null);
+
+
+  const [loadingAreas, setLoadingAreas] = useState(false);
+  const [loadingBoxes, setLoadingBoxes] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+
+  const [statusFilter, setStatusFilter] = useState<'all' | 'not_started' | 'packing' | 'packed' | 'loaded' | 'unpacked'>('all');
+  const [fragileOnly, setFragileOnly] = useState(false);
+
+
+  const [areaModalOpen, setAreaModalOpen] = useState(false);
+  const [areaModalMode, setAreaModalMode] = useState<'create' | 'edit'>('create');
+  const [editingArea, setEditingArea] = useState<PackingArea | null>(null);
+
+
+  const [boxModalOpen, setBoxModalOpen] = useState(false);
+  const [boxModalMode, setBoxModalMode] = useState<'create' | 'edit'>('create');
+  const [editingBox, setEditingBox] = useState<PackingBox | null>(null);
+
+
+  const loadAreas = async () => {
+    try {
+      setLoadingAreas(true);
+      const res = await fetchPackingAreas();
+      setAreas(res);
+
+
+      // If nothing selected yet, pick the first area
+      if (res.length && selectedAreaId == null) {
+        setSelectedAreaId(res[0].id);
+      }
+    } catch (err) {
+      console.error(err);
+      setError('Failed to load packing areas');
+    } finally {
+      setLoadingAreas(false);
+    }
+  };
+
+
+  const loadBoxes = async (areaId: number | null) => {
+    try {
+      setLoadingBoxes(true);
+      setError(null);
+      const res = await fetchPackingBoxes({
+        areaId: areaId ?? undefined,
+        status: statusFilter,
+        fragileOnly,
+      });
+      setBoxes(res);
+    } catch (err) {
+      console.error(err);
+      setError('Failed to load boxes');
+    } finally {
+      setLoadingBoxes(false);
+    }
+  };
+
+
+  useEffect(() => {
+    void loadAreas();
+  }, []);
+
+
+  useEffect(() => {
+    void loadBoxes(selectedAreaId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAreaId, statusFilter, fragileOnly]);
+
+
+  const stats = useMemo(() => {
+    const total = boxes.length;
+    const byStatus: Record<string, number> = {
+      not_started: 0,
+      packing: 0,
+      packed: 0,
+      loaded: 0,
+      unpacked: 0,
+    };
+    boxes.forEach((b) => {
+      if (byStatus[b.status] != null) byStatus[b.status] += 1;
+    });
+    return { total, byStatus };
+  }, [boxes]);
+
+
+  const handleSelectArea = (area: PackingArea | null) => {
+    setSelectedAreaId(area ? area.id : null);
+  };
+
+
+  const openCreateAreaModal = () => {
+    setAreaModalMode('create');
+    setEditingArea(null);
+    setAreaModalOpen(true);
+  };
+
+
+  const openEditAreaModal = (area: PackingArea) => {
+    setAreaModalMode('edit');
+    setEditingArea(area);
+    setAreaModalOpen(true);
+  };
+
+
+  const handleSubmitAreaForm = async (data: {
+    name: string;
+    location?: string;
+    notes?: string;
+    order_index?: number | null;
+  }) => {
+    if (areaModalMode === 'create') {
+      await createPackingArea({
+        name: data.name,
+        location: data.location || null,
+        notes: data.notes || null,
+        order_index: data.order_index ?? null,
+      });
+    } else if (areaModalMode === 'edit' && editingArea) {
+      await updatePackingArea(editingArea.id, {
+        name: data.name,
+        location: data.location || null,
+        notes: data.notes || null,
+        order_index: data.order_index ?? null,
+      });
+    }
+    setAreaModalOpen(false);
+    await loadAreas();
+  };
+
+
+  const handleDeleteArea = async (area: PackingArea) => {
+    if (!window.confirm(`Delete area "${area.name}"? This will also delete its boxes/items.`)) {
+      return;
+    }
+    await deletePackingArea(area.id);
+    if (selectedAreaId === area.id) {
+      setSelectedAreaId(null);
+    }
+    await loadAreas();
+    await loadBoxes(null);
+  };
+
+
+  const openCreateBoxModal = () => {
+    setBoxModalMode('create');
+    setEditingBox(null);
+    setBoxModalOpen(true);
+  };
+
+
+  const openEditBoxModal = (box: PackingBox) => {
+    setBoxModalMode('edit');
+    setEditingBox(box);
+    setBoxModalOpen(true);
+  };
+
+
+  const handleSubmitBoxForm = async (data: {
+    area_id: number | null;
+    label: string;
+    description?: string;
+    status: PackingBox['status'];
+    box_type?: string;
+    fragile?: boolean;
+    priority?: number | null;
+    loaded_trip_id?: number | null;
+    notes?: string;
+  }) => {
+    if (boxModalMode === 'create') {
+      await createPackingBox({
+        area_id: data.area_id ?? selectedAreaId ?? null,
+        label: data.label,
+        description: data.description || null,
+        status: data.status,
+        box_type: data.box_type || null,
+        fragile: !!data.fragile,
+        priority: data.priority ?? null,
+        loaded_trip_id: data.loaded_trip_id ?? null,
+        notes: data.notes || null,
+      });
+    } else if (boxModalMode === 'edit' && editingBox) {
+      await updatePackingBox(editingBox.id, {
+        area_id: data.area_id ?? selectedAreaId ?? null,
+        label: data.label,
+        description: data.description || null,
+        status: data.status,
+        box_type: data.box_type || null,
+        fragile: !!data.fragile,
+        priority: data.priority ?? null,
+        loaded_trip_id: data.loaded_trip_id ?? null,
+        notes: data.notes || null,
+      });
+    }
+    setBoxModalOpen(false);
+    await loadBoxes(selectedAreaId);
+  };
+
+
+  const handleDeleteBox = async (box: PackingBox) => {
+    if (!window.confirm(`Delete box "${box.label}"?`)) return;
+    await deletePackingBox(box.id);
+    await loadBoxes(selectedAreaId);
+  };
+
+
+  const handleUpdateBoxStatus = async (box: PackingBox, status: PackingBox['status']) => {
+    const updated = await updatePackingBox(box.id, { status });
+    setBoxes((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
+  };
+
+
+  return (
+    <div className="packing-page">
+      <h1>Packing & Boxes</h1>
+      <p className="packing-subtitle">
+        Room-by-room packing board for 53 Buckland St and the Dubbo move.
+      </p>
+
+
+      <div className="packing-layout">
+        <aside className="packing-sidebar">
+          <PackingAreasSidebar
+            areas={areas}
+            loading={loadingAreas}
+            selectedAreaId={selectedAreaId}
+            onSelectArea={handleSelectArea}
+            onAddArea={openCreateAreaModal}
+            onEditArea={openEditAreaModal}
+            onDeleteArea={handleDeleteArea}
+          />
+        </aside>
+
+
+        <main className="packing-main">
+          <div className="packing-controls">
+            <div className="packing-stats">
+              <span>Total boxes: {stats.total}</span>
+              <span>Not started: {stats.byStatus.not_started}</span>
+              <span>Packing: {stats.byStatus.packing}</span>
+              <span>Packed: {stats.byStatus.packed}</span>
+              <span>Loaded: {stats.byStatus.loaded}</span>
+              <span>Unpacked: {stats.byStatus.unpacked}</span>
+            </div>
+
+
+            <div className="packing-filters">
+              <label>
+                Status:
+                <select
+                  value={statusFilter}
+                  onChange={(e) =>
+                    setStatusFilter(e.target.value as typeof statusFilter)
+                  }
+                >
+                  <option value="all">All</option>
+                  <option value="not_started">Not started</option>
+                  <option value="packing">Packing</option>
+                  <option value="packed">Packed</option>
+                  <option value="loaded">Loaded</option>
+                  <option value="unpacked">Unpacked</option>
+                </select>
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={fragileOnly}
+                  onChange={(e) => setFragileOnly(e.target.checked)}
+                />
+                Fragile only
+              </label>
+              <button type="button" onClick={openCreateBoxModal}>
+                + Add Box
+              </button>
+            </div>
+          </div>
+
+
+          {error && <div className="error-banner">{error}</div>}
+
+
+          <PackingBoxesList
+            boxes={boxes}
+            loading={loadingBoxes}
+            areas={areas}
+            onEditBox={openEditBoxModal}
+            onDeleteBox={handleDeleteBox}
+            onUpdateStatus={handleUpdateBoxStatus}
+          />
+        </main>
+      </div>
+
+
+      <PackingAreaFormModal
+        open={areaModalOpen}
+        mode={areaModalMode}
+        initialArea={editingArea}
+        onCancel={() => setAreaModalOpen(false)}
+        onSubmit={handleSubmitAreaForm}
+      />
+
+
+      <PackingBoxFormModal
+        open={boxModalOpen}
+        mode={boxModalMode}
+        initialBox={editingBox}
+        areas={areas}
+        defaultAreaId={selectedAreaId}
+        onCancel={() => setBoxModalOpen(false)}
+        onSubmit={handleSubmitBoxForm}
+      />
+    </div>
+  );
+};
+
+
+4.3 Sidebar: PackingAreasSidebar
+Create client/src/components/PackingAreasSidebar.tsx:
+import React from 'react';
+import type { PackingArea, PackingBox } from '../types/api';
+
+
+interface PackingAreasSidebarProps {
+  areas: PackingArea[];
+  loading: boolean;
+  selectedAreaId: number | null;
+  onSelectArea: (area: PackingArea | null) => void;
+  onAddArea: () => void;
+  onEditArea: (area: PackingArea) => void;
+  onDeleteArea: (area: PackingArea) => void;
+}
+
+
+export const PackingAreasSidebar: React.FC<PackingAreasSidebarProps> = ({
+  areas,
+  loading,
+  selectedAreaId,
+  onSelectArea,
+  onAddArea,
+  onEditArea,
+  onDeleteArea,
+}) => {
+  return (
+    <div className="packing-areas-sidebar">
+      <header className="packing-areas-header">
+        <h2>Rooms / Areas</h2>
+        <button type="button" onClick={onAddArea}>
+          + Add
+        </button>
+      </header>
+
+
+      {loading ? (
+        <div>Loading areas…</div>
+      ) : !areas.length ? (
+        <div>No areas yet. Add your first room (e.g. Kitchen, Master Bedroom).</div>
+      ) : (
+        <ul className="packing-areas-list">
+          {areas.map((area) => (
+            <li
+              key={area.id}
+              className={
+                area.id === selectedAreaId
+                  ? 'packing-area-item selected'
+                  : 'packing-area-item'
+              }
+              onClick={() => onSelectArea(area)}
+            >
+              <div className="packing-area-main">
+                <div className="packing-area-name">{area.name}</div>
+                {area.location && (
+                  <div className="packing-area-location">{area.location}</div>
+                )}
+              </div>
+              <div className="packing-area-actions">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEditArea(area);
+                  }}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteArea(area);
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+
+      <button
+        type="button"
+        className="packing-area-clear"
+        onClick={() => onSelectArea(null)}
+      >
+        Show all boxes
+      </button>
+    </div>
+  );
+};
+
+
+4.4 Box List: PackingBoxesList
+Create client/src/components/PackingBoxesList.tsx:
+import React, { useMemo } from 'react';
+import type { PackingArea, PackingBox, PackingBoxStatus } from '../types/api';
+
+
+interface PackingBoxesListProps {
+  boxes: PackingBox[];
+  areas: PackingArea[];
+  loading: boolean;
+  onEditBox: (box: PackingBox) => void;
+  onDeleteBox: (box: PackingBox) => void;
+  onUpdateStatus: (box: PackingBox, status: PackingBoxStatus) => void;
+}
+
+
+function statusLabel(status: PackingBoxStatus): string {
+  switch (status) {
+    case 'not_started':
+      return 'Not started';
+    case 'packing':
+      return 'Packing';
+    case 'packed':
+      return 'Packed';
+    case 'loaded':
+      return 'Loaded';
+    case 'unpacked':
+      return 'Unpacked';
+    default:
+      return status;
+  }
+}
+
+
+export const PackingBoxesList: React.FC<PackingBoxesListProps> = ({
+  boxes,
+  areas,
+  loading,
+  onEditBox,
+  onDeleteBox,
+  onUpdateStatus,
+}) => {
+  const areaMap = useMemo(
+    () =>
+      areas.reduce<Record<number, PackingArea>>((acc, a) => {
+        acc[a.id] = a;
+        return acc;
+      }, {}),
+    [areas]
+  );
+
+
+  if (loading) {
+    return <div>Loading boxes…</div>;
+  }
+
+
+  if (!boxes.length) {
+    return <div>No boxes yet. Add your first box for this move.</div>;
+  }
+
+
+  return (
+    <table className="packing-boxes-table">
+      <thead>
+        <tr>
+          <th>Label</th>
+          <th>Room/Area</th>
+          <th>Description</th>
+          <th>Status</th>
+          <th>Type</th>
+          <th>Fragile</th>
+          <th>Priority</th>
+          <th />
+        </tr>
+      </thead>
+      <tbody>
+        {boxes.map((box) => {
+          const area = box.area_id != null ? areaMap[box.area_id] : undefined;
+          return (
+            <tr key={box.id}>
+              <td>{box.label}</td>
+              <td>{area ? area.name : '—'}</td>
+              <td>{box.description || '—'}</td>
+              <td>
+                <select
+                  value={box.status}
+                  onChange={(e) =>
+                    onUpdateStatus(box, e.target.value as PackingBoxStatus)
+                  }
+                >
+                  <option value="not_started">Not started</option>
+                  <option value="packing">Packing</option>
+                  <option value="packed">Packed</option>
+                  <option value="loaded">Loaded</option>
+                  <option value="unpacked">Unpacked</option>
+                </select>
+              </td>
+              <td>{box.box_type || '—'}</td>
+              <td>{box.fragile ? 'Yes' : 'No'}</td>
+              <td>{box.priority ?? '—'}</td>
+              <td>
+                <button type="button" onClick={() => onEditBox(box)}>
+                  Edit
+                </button>
+                <button type="button" onClick={() => onDeleteBox(box)}>
+                  Delete
+                </button>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+};
+
+
+4.5 Area Modal: PackingAreaFormModal
+Create client/src/components/PackingAreaFormModal.tsx:
+import React, { useEffect, useState } from 'react';
+import type { PackingArea } from '../types/api';
+
+
+interface PackingAreaFormModalProps {
+  open: boolean;
+  mode: 'create' | 'edit';
+  initialArea?: PackingArea | null;
+  onCancel: () => void;
+  onSubmit: (data: {
+    name: string;
+    location?: string;
+    notes?: string;
+    order_index?: number | null;
+  }) => void;
+}
+
+
+export const PackingAreaFormModal: React.FC<PackingAreaFormModalProps> = ({
+  open,
+  mode,
+  initialArea,
+  onCancel,
+  onSubmit,
+}) => {
+  const [name, setName] = useState('');
+  const [location, setLocation] = useState('');
+  const [notes, setNotes] = useState('');
+  const [orderIndex, setOrderIndex] = useState<string>('');
+
+
+  useEffect(() => {
+    if (open && mode === 'edit' && initialArea) {
+      setName(initialArea.name);
+      setLocation(initialArea.location || '');
+      setNotes(initialArea.notes || '');
+      setOrderIndex(
+        initialArea.order_index != null ? String(initialArea.order_index) : ''
+      );
+    } else if (open && mode === 'create') {
+      setName('');
+      setLocation('Bendigo');
+      setNotes('');
+      setOrderIndex('');
+    }
+  }, [open, mode, initialArea]);
+
+
+  if (!open) return null;
+
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    onSubmit({
+      name: name.trim(),
+      location: location.trim() || undefined,
+      notes: notes.trim() || undefined,
+      order_index: orderIndex ? Number(orderIndex) : null,
+    });
+  };
+
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal">
+        <h2>{mode === 'create' ? 'Add Area' : 'Edit Area'}</h2>
+        <form onSubmit={handleSubmit} className="packing-area-form">
+          <label>
+            Name
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Kitchen, Master Bedroom, Garage…"
+              required
+            />
+          </label>
+          <label>
+            Location
+            <input
+              type="text"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              placeholder="Bendigo, Dubbo, Storage…"
+            />
+          </label>
+          <label>
+            Order
+            <input
+              type="number"
+              value={orderIndex}
+              onChange={(e) => setOrderIndex(e.target.value)}
+            />
+          </label>
+          <label>
+            Notes
+            <textarea
+              rows={3}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </label>
+          <div className="modal-actions">
+            <button type="button" onClick={onCancel}>
+              Cancel
+            </button>
+            <button type="submit">
+              {mode === 'create' ? 'Add Area' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+
+4.6 Box Modal: PackingBoxFormModal
+Create client/src/components/PackingBoxFormModal.tsx:
+import React, { useEffect, useState } from 'react';
+import type { PackingArea, PackingBox, PackingBoxStatus } from '../types/api';
+
+
+interface PackingBoxFormModalProps {
+  open: boolean;
+  mode: 'create' | 'edit';
+  initialBox?: PackingBox | null;
+  areas: PackingArea[];
+  defaultAreaId: number | null;
+  onCancel: () => void;
+  onSubmit: (data: {
+    area_id: number | null;
+    label: string;
+    description?: string;
+    status: PackingBoxStatus;
+    box_type?: string;
+    fragile?: boolean;
+    priority?: number | null;
+    loaded_trip_id?: number | null;
+    notes?: string;
+  }) => void;
+}
+
+
+export const PackingBoxFormModal: React.FC<PackingBoxFormModalProps> = ({
+  open,
+  mode,
+  initialBox,
+  areas,
+  defaultAreaId,
+  onCancel,
+  onSubmit,
+}) => {
+  const [areaId, setAreaId] = useState<number | null>(defaultAreaId);
+  const [label, setLabel] = useState('');
+  const [description, setDescription] = useState('');
+  const [status, setStatus] = useState<PackingBoxStatus>('not_started');
+  const [boxType, setBoxType] = useState('');
+  const [fragile, setFragile] = useState(false);
+  const [priority, setPriority] = useState<string>('');
+  const [notes, setNotes] = useState('');
+
+
+  useEffect(() => {
+    if (open && mode === 'edit' && initialBox) {
+      setAreaId(initialBox.area_id);
+      setLabel(initialBox.label);
+      setDescription(initialBox.description || '');
+      setStatus(initialBox.status);
+      setBoxType(initialBox.box_type || '');
+      setFragile(!!initialBox.fragile);
+      setPriority(initialBox.priority != null ? String(initialBox.priority) : '');
+      setNotes(initialBox.notes || '');
+    } else if (open && mode === 'create') {
+      setAreaId(defaultAreaId);
+      setLabel('');
+      setDescription('');
+      setStatus('not_started');
+      setBoxType('carton');
+      setFragile(false);
+      setPriority('');
+      setNotes('');
+    }
+  }, [open, mode, initialBox, defaultAreaId]);
+
+
+  if (!open) return null;
+
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!label.trim()) return;
+
+
+    onSubmit({
+      area_id: areaId,
+      label: label.trim(),
+      description: description.trim() || undefined,
+      status,
+      box_type: boxType.trim() || undefined,
+      fragile,
+      priority: priority ? Number(priority) : null,
+      notes: notes.trim() || undefined,
+    });
+  };
+
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal">
+        <h2>{mode === 'create' ? 'Add Box' : 'Edit Box'}</h2>
+        <form onSubmit={handleSubmit} className="packing-box-form">
+          <label>
+            Room/Area
+            <select
+              value={areaId ?? ''}
+              onChange={(e) =>
+                setAreaId(
+                  e.target.value === '' ? null : Number(e.target.value)
+                )
+              }
+            >
+              <option value="">(None)</option>
+              {areas.map((area) => (
+                <option key={area.id} value={area.id}>
+                  {area.name} {area.location ? `(${area.location})` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+
+
+          <label>
+            Label
+            <input
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="K1, MBR2, G3…"
+              required
+            />
+          </label>
+
+
+          <label>
+            Description
+            <input
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Pantry items, clothes, books…"
+            />
+          </label>
+
+
+          <label>
+            Status
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value as PackingBoxStatus)}
+            >
+              <option value="not_started">Not started</option>
+              <option value="packing">Packing</option>
+              <option value="packed">Packed</option>
+              <option value="loaded">Loaded</option>
+              <option value="unpacked">Unpacked</option>
+            </select>
+          </label>
+
+
+          <label>
+            Box type
+            <input
+              type="text"
+              value={boxType}
+              onChange={(e) => setBoxType(e.target.value)}
+              placeholder="carton, tub, bag…"
+            />
+          </label>
+
+
+          <label>
+            Priority
+            <select
+              value={priority}
+              onChange={(e) => setPriority(e.target.value)}
+            >
+              <option value="">(None)</option>
+              <option value="1">1 – High</option>
+              <option value="2">2 – Medium</option>
+              <option value="3">3 – Low</option>
+            </select>
+          </label>
+
+
+          <label className="packing-box-fragile">
+            <input
+              type="checkbox"
+              checked={fragile}
+              onChange={(e) => setFragile(e.target.checked)}
+            />
+            Fragile
+          </label>
+
+
+          <label>
+            Notes
+            <textarea
+              rows={3}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </label>
+
+
+          <div className="modal-actions">
+            <button type="button" onClick={onCancel}>
+              Cancel
+            </button>
+            <button type="submit">
+              {mode === 'create' ? 'Add Box' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+
+(If you later want to add per-box items listing, you can extend this form or a box detail view using packing_items APIs.)
+________________
+
+
+5. Styling
+In client/src/index.css (or equivalent), add:
+.packing-page {
+  padding: 1.5rem;
+}
+
+
+.packing-subtitle {
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+  opacity: 0.8;
+}
+
+
+.packing-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  gap: 1.5rem;
+}
+
+
+.packing-sidebar {
+  border-right: 1px solid #ddd;
+  padding-right: 1rem;
+}
+
+
+.packing-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+
+.packing-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+
+.packing-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+}
+
+
+.packing-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+
+.packing-filters label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+
+/* Areas sidebar */
+
+
+.packing-areas-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+
+.packing-areas-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+
+.packing-areas-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+
+.packing-area-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+
+.packing-area-item:hover {
+  background: #f5f5f5;
+}
+
+
+.packing-area-item.selected {
+  background: #e3f2fd;
+}
+
+
+.packing-area-main {
+  display: flex;
+  flex-direction: column;
+}
+
+
+.packing-area-name {
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+
+.packing-area-location {
+  font-size: 0.8rem;
+  opacity: 0.75;
+}
+
+
+.packing-area-actions button {
+  font-size: 0.75rem;
+  margin-left: 0.25rem;
+}
+
+
+.packing-area-clear {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+
+
+/* Boxes table */
+
+
+.packing-boxes-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+
+.packing-boxes-table th,
+.packing-boxes-table td {
+  border: 1px solid #ddd;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.9rem;
+}
+
+
+.packing-boxes-table th {
+  background: #f7f7f7;
+}
+
+
+/* Forms */
+
+
+.packing-area-form label,
+.packing-box-form label {
+  display: block;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+
+.packing-area-form input,
+.packing-area-form textarea,
+.packing-box-form input,
+.packing-box-form textarea,
+.packing-box-form select {
+  width: 100%;
+  margin-top: 0.25rem;
+  margin-bottom: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.9rem;
+}
+
+
+.packing-box-fragile {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+
+/* Reuse existing modal styles:
+   .modal-backdrop, .modal, .modal-actions already added in previous CTs
+*/
+
+
+________________
+
+
+6. README Update
+In README.md:
+                                                                                                                                       * Under API Overview, add:
+
+                                                                                                                                          * GET /api/packing-areas?location=&limit=
+
+                                                                                                                                          * POST /api/packing-areas
+
+                                                                                                                                          * GET /api/packing-areas/:id
+
+                                                                                                                                          * PATCH /api/packing-areas/:id
+
+                                                                                                                                          * DELETE /api/packing-areas/:id
+
+                                                                                                                                          * GET /api/packing-boxes?areaId=&status=&fragileOnly=&limit=
+
+                                                                                                                                          * POST /api/packing-boxes
+
+                                                                                                                                          * GET /api/packing-boxes/:id
+
+                                                                                                                                          * PATCH /api/packing-boxes/:id
+
+                                                                                                                                          * DELETE /api/packing-boxes/:id
+
+                                                                                                                                          * GET /api/packing-items?boxId=&limit=
+
+                                                                                                                                          * POST /api/packing-items
+
+                                                                                                                                          * GET /api/packing-items/:id
+
+                                                                                                                                          * PATCH /api/packing-items/:id
+
+                                                                                                                                          * DELETE /api/packing-items/:id
+
+                                                                                                                                             * Under UI Routes, add:
+
+                                                                                                                                                * /packing – Packing & Boxes board (rooms/areas, boxes per room, status tracking).
+
+You can briefly note that this is intended for 53 Buckland → Dubbo packing, with area/location fields distinguishing Bendigo vs Dubbo.
+________________
+
+
+________________
+7. Acceptance Criteria
+CT12 is complete when:
+                                                                                                                                                   1. npm run dev still runs backend & frontend with no TypeScript errors.
+
+                                                                                                                                                   2. Backend:
+
+                                                                                                                                                      * packing_areas, packing_boxes, packing_items tables exist in SQLite.
+
+                                                                                                                                                      * POST /api/packing-areas with { "name": "Kitchen", "location": "Bendigo" } creates an area.
+
+                                                                                                                                                      * POST /api/packing-boxes with { "area_id": <kitchenId>, "label": "K1", "description": "Pantry items", "status": "packing", "fragile": true } creates a box.
+
+                                                                                                                                                      * GET /api/packing-boxes?areaId=<kitchenId> returns that box.
+
+                                                                                                                                                      * PATCH /api/packing-boxes/:id can change status to packed or loaded.
+
+                                                                                                                                                         3. Frontend:
+
+                                                                                                                                                            * Nav includes a “Packing” link that opens /packing.
+
+                                                                                                                                                            * /packing shows:
+
+                                                                                                                                                               * Rooms/areas sidebar with add/edit/delete and a way to select an area or “Show all boxes”.
+
+                                                                                                                                                               * Top stats line for total boxes and count by status.
+
+                                                                                                                                                               * Filters for status and “Fragile only”.
+
+                                                                                                                                                               * Table of boxes with labels, room, description, status dropdown, type, fragile flag, priority, and edit/delete buttons.
+
+                                                                                                                                                               * Ability to add a new box (prefilling area from currently selected room if any).
+
+                                                                                                                                                                  * Updating box status via dropdown updates the backend and UI.
+
+                                                                                                                                                                     4. All new APIs and components behave consistently with the rest of the PDM project; existing pages (Tasks, Move Plan, Housing, DCS, Compliance, Next Actions, etc.) still work as before.
+
+Please output all new/changed backend and frontend files in full (migration snippet, types, DB helpers, routes, API clients, page, components, CSS, README changes) so I can paste them into the project and immediately use the Packing & Boxes board.
+________________
+
+
+CT13 – “Why This?” Explanations (AI-Ready Rationale Service)
+Goal:
+Add a “Why this?” explanation system so that for any task – especially those returned by the /api/next_actions endpoint – Josh can tap “Why?” and see a short, contextual explanation of why this task matters now, ideally referencing domain, due dates, and any linked document.
+This CT should:
+                                                                                                                                                                        * Add a DB structure for storing per-task explanations.
+
+                                                                                                                                                                        * Implement backend services + API endpoints to fetch/generate “why” explanations.
+
+                                                                                                                                                                        * Wire this into the Dashboard/Next Actions view and Task detail view.
+
+                                                                                                                                                                        * Keep the logic AI-ready: use a heuristic generator now, but isolate it so it can later call an LLM.
+
+Assumptions (from previous CTs):
+                                                                                                                                                                           * Backend: Node.js + Express + SQLite, with existing tables: users, tasks, documents, domains, properties, job_options, childcare_options, providers, appointments, trips, trip_assignments, etc.
+
+                                                                                                                                                                           * tasks schema (from CT2) roughly includes:
+task_id, user_id, description, domain_id, due_date, status, priority, origin_doc_id, related_property_id, related_job_id, related_provider_id, related_childcare_id, notes.
+
+                                                                                                                                                                           * There is already a /api/tasks CRUD API and a /api/next_actions endpoint that returns the top 1–3 recommended tasks.
+
+                                                                                                                                                                           * Frontend is React + TypeScript, with:
+
+                                                                                                                                                                              * A Dashboard / Next Actions view showing recommended tasks.
+
+                                                                                                                                                                              * A Tasks list/detail view.
+
+If anything is missing in the actual repo, extend it as needed instead of rewriting from scratch.
+________________
+
+
+1. Database: task_explanations table
+Using the same migration/tooling as CT2, add a new table: task_explanations.
+
+Suggested schema (SQLite):
+
+CREATE TABLE IF NOT EXISTS task_explanations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL,
+  explanation TEXT NOT NULL,
+  source_doc_id INTEGER NULL,
+  source_excerpt TEXT NULL,
+  generated_by TEXT NOT NULL DEFAULT 'heuristic', -- 'heuristic' | 'ai' | 'manual'
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(task_id) REFERENCES tasks(task_id) ON DELETE CASCADE,
+  FOREIGN KEY(source_doc_id) REFERENCES documents(doc_id) ON DELETE SET NULL
+);
+                                                                                                                                                                                 1. Add an index for lookups by task:
+
+CREATE INDEX IF NOT EXISTS idx_task_explanations_task_id
+  ON task_explanations(task_id);
+                                                                                                                                                                                 2.                                                                                                                                                                                  3. Update any central DB initialisation code so migrations get run and the new table is available to the app.
+
+Acceptance check (DB):
+                                                                                                                                                                                    * Running migrations creates task_explanations with the fields above.
+
+                                                                                                                                                                                    * No breaking changes to existing tables.
+
+________________
+
+
+2. Backend service: explanationService
+Create a reusable service module, e.g. backend/src/services/explanationService.ts (or similar path matching your structure).
+Define types (or interfaces) consistent with your existing models:
+
+export interface TaskRecord {
+  task_id: number;
+  user_id: number;
+  description: string;
+  domain_id: number | null;
+  due_date: string | null; // ISO string or null
+  status: string;
+  priority: number | null;
+  origin_doc_id?: number | null;
+  notes?: string | null;
+}
+
+
+export interface DocumentRecord {
+  doc_id: number;
+  user_id: number;
+  title: string;
+  content_text: string | null;
+}
+
+
+export interface DomainRecord {
+  domain_id: number;
+  name: string; // e.g. 'Housing', 'Health', 'Childcare', etc.
+}
+
+
+export interface TaskExplanationRecord {
+  id: number;
+  task_id: number;
+  explanation: string;
+  source_doc_id: number | null;
+  source_excerpt: string | null;
+  generated_by: string;
+  created_at: string;
+  updated_at: string;
+}
+                                                                                                                                                                                       1.                                                                                                                                                                                        2. Implement a helper to find the most relevant document for a task:
+
+                                                                                                                                                                                          * First preference: origin_doc_id on the Task.
+
+                                                                                                                                                                                          * If absent, try a simple keyword search in documents.content_text using a few keywords from task.description.
+
+                                                                                                                                                                                          * The implementation can be naive (e.g. split description into words, ignore very short words, use LIKE queries).
+
+export async function findRelatedDocumentForTask(taskId: number): Promise<DocumentRecord | null> {
+  // load task, then:
+  // 1. if task.origin_doc_id, fetch that document
+  // 2. else, pick 2–4 keywords from task.description and run a LIKE query over documents.content_text
+}
+                                                                                                                                                                                             3. Implement a heuristic explanation generator that does not yet call an LLM but produces reasonably helpful text:
+
+interface WhyContext {
+  task: TaskRecord;
+  domain?: DomainRecord | null;
+  document?: DocumentRecord | null;
+}
+
+
+export function generateHeuristicExplanation(ctx: WhyContext): string {
+  const { task, domain, document } = ctx;
+  const parts: string[] = [];
+
+
+  // Domain-based emphasis
+  if (domain?.name === 'Health') {
+    parts.push(
+      "This task is about health, which is high priority for keeping Kristy and the family safe and stable during the move."
+    );
+    if (/tysabri|infusion|neurolog/i.test(task.description)) {
+      parts.push(
+        "It helps avoid a gap in MS treatment or delays in setting up Tysabri infusions after you arrive in Dubbo."
+      );
+    }
+  } else if (domain?.name === 'Housing') {
+    parts.push(
+      "This task affects your housing timeline, either preparing 53 Buckland St for rental or securing your Dubbo rental."
+    );
+  } else if (domain?.name === 'Childcare') {
+    parts.push(
+      "This task affects childcare or schooling, which is key for giving Sylvie and Elias stable routines around the move."
+    );
+  }
+
+
+  // Due date emphasis
+  if (task.due_date) {
+    parts.push(
+      "It has a due date soon, which means doing it now helps reduce last-minute stress as the move window approaches."
+    );
+  }
+
+
+  // Document tie-in
+  if (document) {
+    parts.push(
+      `It comes from your planning document "${document.title}", which you identified as important for the move sequence.`
+    );
+  }
+
+
+  // Fallback if nothing else fired
+  if (parts.length === 0) {
+    parts.push(
+      "This task was captured in your move plan as a necessary step to keep the Bendigo → Dubbo transition running smoothly."
+    );
+  }
+
+
+  return parts.join(" ");
+}
+                                                                                                                                                                                             4.                                                                                                                                                                                              5. Implement DB helpers:
+
+                                                                                                                                                                                                * getExplanationForTask(taskId) – fetch from task_explanations if exists.
+
+                                                                                                                                                                                                * saveExplanation(taskId, explanation, source_doc_id, generated_by) – insert/update row.
+
+                                                                                                                                                                                                * Optionally, a simple upsert pattern: if explanation exists, update; otherwise insert.
+
+Optionally, AI hook (no need to fully implement, just stub for future use):
+
+async function maybeCallAiForExplanation(ctx: WhyContext): Promise<string | null> {
+  if (process.env.PDM_AI_EXPLANATIONS !== 'on') return null;
+  // Placeholder: here we could call an external AI service.
+  // For now, just return null so we fall back to heuristics.
+  return null;
+}
+
+
+export async function generateAndStoreExplanation(taskId: number): Promise<TaskExplanationRecord> {
+  // 1. Load task + domain + related document
+  // 2. Try AI (maybeCallAiForExplanation)
+  // 3. If null, use generateHeuristicExplanation
+  // 4. Store into task_explanations and return record
+}
+                                                                                                                                                                                                   6. Acceptance check (service):
+                                                                                                                                                                                                   * Calling generateAndStoreExplanation(taskId) for an existing task creates a row in task_explanations and returns it.
+
+                                                                                                                                                                                                   * Explanations mention domain (if present) and due date/document when available.
+
+________________
+
+
+3. Backend routes: /api/tasks/:id/why
+Add the following routes to the Express backend (e.g. in backend/src/routes/tasks.ts or similar):
+                                                                                                                                                                                                      1. GET /api/tasks/:id/why
+
+                                                                                                                                                                                                         * Behaviour:
+
+                                                                                                                                                                                                            * Validate :id as integer and load the task.
+
+                                                                                                                                                                                                            * If no task ⇒ 404.
+
+                                                                                                                                                                                                            * Check if an explanation already exists in task_explanations for this task_id.
+
+                                                                                                                                                                                                               * If yes ⇒ return it.
+
+                                                                                                                                                                                                               * If no ⇒ call generateAndStoreExplanation(taskId) and return the new explanation.
+
+Response shape:
+
+{
+  "task_id": 123,
+  "explanation": "This task is about health...",
+  "source_doc_id": 5,
+  "source_excerpt": null
+}
+                                                                                                                                                                                                                  *                                                                                                                                                                                                                   2. POST /api/tasks/:id/why/regenerate
+
+                                                                                                                                                                                                                     * Behaviour:
+
+                                                                                                                                                                                                                        * Same validation/loading as above.
+
+                                                                                                                                                                                                                        * Always call generateAndStoreExplanation(taskId) to replace any existing explanation.
+
+                                                                                                                                                                                                                           * Response: same as GET shape.
+
+                                                                                                                                                                                                                              3. Optional: augment /api/next_actions to support an includeWhy flag:
+
+                                                                                                                                                                                                                                 * If query ?includeWhy=true, for each returned task call getExplanationForTask (or generateAndStoreExplanation if none) and include a why_explanation field in the JSON payload.
+
+                                                                                                                                                                                                                                 * Ensure this is done efficiently (for 1–3 tasks it’s fine to call sequentially).
+
+Acceptance check (API):
+                                                                                                                                                                                                                                    * GET /api/tasks/:id/why for a valid task returns a JSON object with explanation and task_id.
+
+                                                                                                                                                                                                                                    * Calling it twice for the same task returns the same explanation (persisted in DB) unless /regenerate is called.
+
+                                                                                                                                                                                                                                    * POST /api/tasks/:id/why/regenerate returns a new explanation (you can verify by comparing strings in tests).
+
+                                                                                                                                                                                                                                    * If task does not exist, both endpoints return 404 with a helpful error message.
+
+________________
+
+
+4. Frontend: “Why this?” in Dashboard & Task Detail
+Update the React frontend to surface these explanations in a simple, low-cognitive-load way.
+                                                                                                                                                                                                                                       1. On the Dashboard / Next Actions view (where the top 1–3 tasks are shown):
+
+                                                                                                                                                                                                                                          * For each next-action card, add a small “Why this?” link or button.
+
+                                                                                                                                                                                                                                          * When clicked:
+
+                                                                                                                                                                                                                                             * Call GET /api/tasks/:id/why.
+
+                                                                                                                                                                                                                                             * While waiting, show a tiny inline “Loading…” indicator next to the button.
+
+On success, display the explanation directly under the task card, e.g.:
+
+Why this? 
+→ This task is about health, which is high priority for keeping Kristy and the family safe...
+                                                                                                                                                                                                                                                *                                                                                                                                                                                                                                                 * If the API errors, show a non-intrusive message like:
+“Couldn’t load explanation. Please try again later.”
+
+                                                                                                                                                                                                                                                   2. On the Task Detail view (where a single task is visible):
+
+                                                                                                                                                                                                                                                      * On component mount (or when task_id changes), fetch its explanation by calling GET /api/tasks/:id/why.
+
+                                                                                                                                                                                                                                                      * Render a section labeled “Why this matters” showing the explanation text.
+
+                                                                                                                                                                                                                                                      * Include a “Regenerate explanation” button calling POST /api/tasks/:id/why/regenerate and updating the displayed text.
+
+                                                                                                                                                                                                                                                         3. Use the existing HTTP client/utility (e.g. fetch or axios) and state management (React hooks) already introduced in previous CTs. Keep the implementation small and focused.
+
+Acceptance check (UI):
+                                                                                                                                                                                                                                                            * On the Dashboard, clicking “Why this?” under a next-action task shows a non-empty explanation without reloading the page.
+
+                                                                                                                                                                                                                                                            * On Task Detail, “Why this matters” is visible and populated after the task loads.
+
+                                                                                                                                                                                                                                                            * “Regenerate explanation” replaces the text with a new explanation.
+
+                                                                                                                                                                                                                                                            * UI behaves gracefully under slow network or server errors.
+
+________________
+
+
+5. Tests & RAG-style readiness
+                                                                                                                                                                                                                                                               1. If you have any test framework set up (Jest, etc.), add at least a small test file, e.g. explanationService.test.ts, that:
+
+                                                                                                                                                                                                                                                                  * Creates a fake TaskRecord with domain “Health” and description mentioning “Tysabri”, and a fake DocumentRecord.
+
+                                                                                                                                                                                                                                                                  * Calls generateHeuristicExplanation and asserts that:
+
+                                                                                                                                                                                                                                                                     * It mentions health/MS significance.
+
+                                                                                                                                                                                                                                                                     * It mentions the document title.
+
+                                                                                                                                                                                                                                                                        2. Optional but helpful: log (to console or a debug logger) when explanations are generated vs. fetched from DB. This makes it easier to see the caching behaviour when running locally.
+
+Final acceptance for CT13:
+                                                                                                                                                                                                                                                                           * Backend supports persistent, per-task explanations via task_explanations.
+
+                                                                                                                                                                                                                                                                           * /api/tasks/:id/why and /api/tasks/:id/why/regenerate work as described.
+
+                                                                                                                                                                                                                                                                           * Dashboard and Task Detail both surface a “Why?” explanation in a way that’s easy to read on a phone.
+
+                                                                                                                                                                                                                                                                           * The explanation generation is isolated in a service so that later a true LLM/RAG pipeline can replace the heuristic without touching the UI.
