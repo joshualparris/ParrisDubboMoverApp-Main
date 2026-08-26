@@ -46,8 +46,8 @@ export default function Sidebar({ collapsed }: { collapsed: boolean }) {
           <NavLink to="/packing" style={({ isActive }) => ({ ...linkStyle, background: isActive ? '#eaf3ff' : undefined })}>
             Packing
           </NavLink>
-          <NavLink to="/trips" style={({ isActive }) => ({ ...linkStyle, background: isActive ? '#eaf3ff' : undefined })}>
-            Vehicles
+          <NavLink to="/compliance" style={({ isActive }) => ({ ...linkStyle, background: isActive ? '#eaf3ff' : undefined })}>
+            Compliance
           </NavLink>
         </Group>
 
